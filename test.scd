@@ -54,6 +54,27 @@ Routine({
     }.play(kernel.voiceGroup);
     5.0.wait;
 
+// Test 5: TriSin — trigger a note, verify sound, verify real-time amp control
+"Test 5: TriSin basic trigger (440Hz, voice \\1, on dryBus)...".postln;
+~triSinTest = TriSin.new;
+~triSinTest.setParam('all', \bus, kernel.dryBus.index);
+~triSinTest.setParam('all', \amp, 0.5);
+~triSinTest.setParam('all', \release, 2.0);  // long release for amp-sweep test
+~triSinTest.trigger(\1, 440);
+"  Expected: 440Hz tone with 2s release.".postln;
+2.0.wait;
+
+"Test 6: TriSin real-time amp fade — note still sounding, fade amp to 0 mid-note".postln;
+~triSinTest.trigger(\2, 220);
+0.3.wait;
+"  Mid-note, setting amp=0 (should hear smooth fade-out, no click)...".postln;
+~triSinTest.setParam('all', \amp, 0);
+1.5.wait;
+~triSinTest.setParam('all', \amp, 0.5);  // restore for cleanup
+0.5.wait;
+~triSinTest.free;
+1.0.wait;
+
     kernel.free;
     "All tests passed.".postln;
     Server.default.quit;

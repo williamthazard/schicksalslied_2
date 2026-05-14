@@ -1,0 +1,1 @@
+../lib/TriSin.sc
