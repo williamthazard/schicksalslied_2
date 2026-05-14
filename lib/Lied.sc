@@ -314,6 +314,156 @@ Lied {
         fbPatchMixSynth.set(\sineHz, hz);
     }
 
+    // -----------------------------------------------------------------
+    // TriSin instance lifecycle (per row-2 cell)
+    // -----------------------------------------------------------------
+
+    allocTriSin { arg cellId;
+        if (triSinInstances[cellId].isNil) {
+            triSinInstances[cellId] = TriSin.new;
+            ("TriSin allocated: " ++ cellId).postln;
+        }
+    }
+
+    freeTriSin { arg cellId;
+        var inst = triSinInstances[cellId];
+        if (inst.notNil) {
+            inst.free;
+            triSinInstances[cellId] = nil;
+            ("TriSin freed: " ++ cellId).postln;
+        }
+    }
+
+    triggerTriSin { arg cellId, voiceKey, freq;
+        var inst = triSinInstances[cellId];
+        if (inst.notNil) {
+            inst.trigger(voiceKey, freq);
+        }
+    }
+
+    setTriSinParam { arg cellId, paramKey, paramValue;
+        var inst = triSinInstances[cellId];
+        if (inst.notNil) {
+            inst.setParam('all', paramKey, paramValue);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Ringer instance lifecycle (per row-2 cell)
+    // -----------------------------------------------------------------
+
+    allocRinger { arg cellId;
+        if (ringerInstances[cellId].isNil) {
+            ringerInstances[cellId] = Ringer.new;
+            ("Ringer allocated: " ++ cellId).postln;
+        }
+    }
+
+    freeRinger { arg cellId;
+        var inst = ringerInstances[cellId];
+        if (inst.notNil) {
+            inst.free;
+            ringerInstances[cellId] = nil;
+            ("Ringer freed: " ++ cellId).postln;
+        }
+    }
+
+    triggerRinger { arg cellId, voiceKey, freq;
+        var inst = ringerInstances[cellId];
+        if (inst.notNil) {
+            inst.trigger(voiceKey, freq);
+        }
+    }
+
+    setRingerParam { arg cellId, paramKey, paramValue;
+        var inst = ringerInstances[cellId];
+        if (inst.notNil) {
+            inst.setParam('all', paramKey, paramValue);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Sampler instance lifecycle (per row-4/6 slot, 1-16)
+    // -----------------------------------------------------------------
+
+    loadSampler { arg slot, filePath;
+        var buf;
+        fork {
+            if (samplerInstances[slot].notNil) {
+                this.clearSampler(slot);
+            };
+            buf = Buffer.read(server, filePath);
+            server.sync;
+            samplerInstances[slot] = Sampler.new(buf);
+            ("Sampler " ++ slot ++ " loaded: " ++ filePath).postln;
+        };
+    }
+
+    clearSampler { arg slot;
+        var inst = samplerInstances[slot];
+        if (inst.notNil) {
+            inst.buffer.free;
+            inst.free;
+            samplerInstances[slot] = nil;
+            ("Sampler " ++ slot ++ " cleared").postln;
+        }
+    }
+
+    triggerSampler { arg slot, voiceKey, startPos, endPos, rate;
+        var inst = samplerInstances[slot];
+        if (inst.notNil) {
+            inst.trigger(voiceKey, startPos, endPos, rate);
+        }
+    }
+
+    setSamplerParam { arg slot, paramKey, paramValue;
+        var inst = samplerInstances[slot];
+        if (inst.notNil) {
+            inst.setParam('all', paramKey, paramValue);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // OneShot instance lifecycle (per row-8 slot, 1-13)
+    // -----------------------------------------------------------------
+
+    loadOneShot { arg slot, filePath;
+        var buf;
+        fork {
+            if (oneShotInstances[slot].notNil) {
+                this.clearOneShot(slot);
+            };
+            buf = Buffer.read(server, filePath);
+            server.sync;
+            oneShotInstances[slot] = OneShot.new(buf);
+            ("OneShot " ++ slot ++ " loaded: " ++ filePath).postln;
+        };
+    }
+
+    clearOneShot { arg slot;
+        var inst = oneShotInstances[slot];
+        if (inst.notNil) {
+            inst.buffer.free;
+            inst.free;
+            oneShotInstances[slot] = nil;
+            ("OneShot " ++ slot ++ " cleared").postln;
+        }
+    }
+
+    triggerOneShot { arg slot, voiceKey, rate;
+        var inst = oneShotInstances[slot];
+        if (inst.notNil) {
+            inst.triggerWithRate(voiceKey, rate);
+        }
+    }
+
+    setOneShotParam { arg slot, paramKey, paramValue;
+        var inst = oneShotInstances[slot];
+        if (inst.notNil) {
+            inst.setParam('all', paramKey, paramValue);
+        }
+    }
+
     free {
         triSinInstances.do { |inst| inst.free };
         ringerInstances.do { |inst| inst.free };
