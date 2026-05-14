@@ -15,8 +15,7 @@ Ringer {
             s.waitForBoot {
 
                 SynthDef("Ringer", {
-                    arg out = 0,
-                        stopGate = 1,
+                    arg stopGate = 1,
                         index,
                         freq,
                         amp,
@@ -35,6 +34,8 @@ Ringer {
                         doneAction: 2
                     );
 
+                    // amp used here AND on Out (line below) — effective output is amp²;
+                    // inherited from naherinlied donor, intentional, not a bug
                     var sig = Ringz.ar(
                         Impulse.ar(0),
                         freq.lag3(freq_slew),
@@ -87,7 +88,7 @@ Ringer {
         arg voiceKey, freq;
         singleVoices[voiceKey].set(\stopGate, -1.05);
         voiceParams[voiceKey][\freq] = freq;
-        Synth.new("Ringer", [\freq, freq] ++ voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
+        Synth.new("Ringer", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
     }
 
     trigger {
