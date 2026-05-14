@@ -29,11 +29,12 @@ Sampler {
                         pan = 0,
                         pan_slew = 1,
                         cutoff = 12000,
+                        cutoff_slew = 0.05,
                         resonance = 1,
                         rateSlew = 0.1,
                         bus = 0;
                     var snd, snd2, pos, pos2, frames, duration, env, sig,
-                        startA, endA, startB, endB, crossfade, aOrB;
+                        startA, endA, startB, endB, crossfade, aOrB, filtered;
 
                     aOrB = ToggleFF.kr(t_trig);
                     startA = Latch.kr(start, aOrB);
@@ -49,7 +50,7 @@ Sampler {
                     env = EnvGen.ar(
                         Env.new(
                             levels: [0, amp, amp, 0],
-                            times:  [0, duration - 0.1, 0.1]),
+                            times:  [0.005, max(0.001, duration - 0.105), 0.1]),
                         gate: t_trig,
                     );
 
@@ -83,13 +84,12 @@ Sampler {
                         interpolation: 4,
                     );
 
-                    sig = Pan2.ar(
-                        MoogFF.ar(
-                            in: (crossfade * snd) + ((1 - crossfade) * snd2) * env,
-                            freq: cutoff,
-                            gain: resonance),
-                        pan.lag3(pan_slew)
-                    );
+                    filtered = MoogFF.ar(
+                        in: (crossfade * snd) + ((1 - crossfade) * snd2) * env,
+                        freq: cutoff.lag3(cutoff_slew),
+                        gain: resonance);
+
+                    sig = Balance2.ar(filtered[0], filtered[1], pan.lag3(pan_slew));
 
                     // .lag3 on amp for click-free real-time amp control
                     Out.ar(bus, LeakDC.ar(sig) * amp.lag3(amp_slew));
@@ -119,6 +119,7 @@ Sampler {
             \pan, 0,
             \pan_slew, 1,
             \cutoff, 12000,
+            \cutoff_slew, 0.05,
             \resonance, 1,
             \rateSlew, 0.1,
             \bus, 0;
