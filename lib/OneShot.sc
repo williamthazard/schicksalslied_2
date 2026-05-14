@@ -87,6 +87,21 @@ OneShot {
         });
     }
 
+    // Trigger a voice with a specific rate, set + retrigger in one OSC message.
+    // Used by Lied.triggerOneShot for one-shot cells where the rate comes
+    // from the cell's value_mode runtime (per Sub-plan B's sequencer).
+    triggerWithRate {
+        arg voiceKey, rate;
+        voiceParams[voiceKey][\rate] = rate;
+        if (singleVoices[voiceKey].isPlaying, {
+            singleVoices[voiceKey].set(\rate, rate, \t_gate, 1);
+        }, {
+            Synth.new("OneShot", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
+            singleVoices[voiceKey].set(\t_gate, 1);
+            NodeWatcher.register(singleVoices[voiceKey], true);
+        });
+    }
+
     trigger {
         arg voiceKey;
         if (voiceKey == 'all', {
