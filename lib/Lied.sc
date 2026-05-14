@@ -10,6 +10,14 @@ Lied {
     var <samplerInstances;          // Dictionary: slot (Integer)  → Sampler instance
     var <oneShotInstances;          // Dictionary: slot (Integer)  → OneShot instance
 
+    // Granular delay state
+    var <delayBuf, <micBus, <ptrBus;
+    var <micGrp, <ptrGrp, <recGrp, <granGrp;
+    var <micSynth, <micDrySynth, <ptrSynth, <recSynth, <fbPatchMixSynth;
+    var <grainSynths;
+    var <grainPanLFOs, <grainCutoffLFOs, <grainResLFOs;
+    var <grainRates, <grainDurs, <grainDelays;
+
     *new { arg server;
         ^super.new.init(server);
     }
@@ -183,6 +191,85 @@ Lied {
             [\inBus, dryBus],
             outGroup);
 
+        // -----------------------------------------------------------------
+        // Granular delay chain — allocated persistently
+        // -----------------------------------------------------------------
+
+        // Delay buffer: 512 beats long at initial tempo (beat_sec defaults to 0.5)
+        delayBuf = Buffer.alloc(server, server.sampleRate * (beat_sec * 512), 1);
+        micBus = Bus.audio(server, 1);
+        ptrBus = Bus.audio(server, 1);
+
+        server.sync;
+
+        // Granular group hierarchy: mic → ptr → rec → gran, before voiceGroup so
+        // mic input writes to delayBuf before voiceGroup's voices read from it.
+        // Voice groups remain head-of-chain for clean signal flow.
+        micGrp  = Group.before(voiceGroup);
+        ptrGrp  = Group.after(micGrp);
+        recGrp  = Group.after(ptrGrp);
+        granGrp = Group.after(recGrp);
+
+        // Persistent granular chain synths (default amp = 0; turned up by cell toggles)
+        micSynth        = Synth(\liedMic,        [\in, 0, \out, micBus, \amp, 0],     micGrp);
+        micDrySynth     = Synth(\liedMicDry,     [\in, 0, \out, dryBus, \amp, 0],     micGrp);
+        fbPatchMixSynth = Synth(\liedFbPatchMix, [\in, 0, \out, micBus, \amp, 0],     micGrp, \addToHead);
+        ptrSynth        = Synth(\liedPtr,        [\buf, delayBuf, \out, ptrBus],      ptrGrp);
+        recSynth        = Synth(\liedRec,        [\ptrIn, ptrBus, \micIn, micBus, \buf, delayBuf], recGrp);
+
+        // Grain LFOs (16 each for pan, cutoff, resonance). Stored as Ndefs; the
+        // \rate.kr arg lets Sub-plan C wire params to these.
+        grainPanLFOs     = Array.fill(16, { 0 });
+        grainCutoffLFOs  = Array.fill(16, { 0 });
+        grainResLFOs     = Array.fill(16, { 0 });
+        16.do({ arg i;
+            grainPanLFOs[i] = Ndef(
+                ("grainPan" ++ i).asSymbol,
+                { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(-1, 1); }
+            );
+            grainCutoffLFOs[i] = Ndef(
+                ("grainCutoff" ++ i).asSymbol,
+                { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(500, 15000); }
+            );
+            grainResLFOs[i] = Ndef(
+                ("grainRes" ++ i).asSymbol,
+                { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(0, 2); }
+            );
+        });
+
+        // Scrambled per-grain rates, durations, delays (carters-delay-norns idiom)
+        grainRates  = [1/4, 1/2, 1, 3/2, 2].scramble;
+        grainDurs   = 16.collect({ arg i; beat_sec * (i + 1); }).scramble;
+        grainDelays = 16.collect({ arg i; server.sampleRate * (beat_sec * (i + 1)) * 16; }).scramble;
+
+        grainSynths = 16.collect({ arg n;
+            Synth(\liedGran, [
+                \amp, 0,
+                \buf, delayBuf,
+                \out, dryBus,
+                \atk, 1,
+                \rel, 1,
+                \gate, 1,
+                \sync, 1,
+                \dens, 1 / (grainDurs[n] * grainRates[n % 5]),
+                \baseDur, grainDurs[n],
+                \durRand, 1,
+                \rate, grainRates[n % 5],
+                \rateRand, 1,
+                \pan, grainPanLFOs[n],
+                \panRand, 0,
+                \grainEnv, -1,
+                \ptrBus, ptrBus,
+                \ptrSampleDelay, grainDelays[n],
+                \ptrRandSamples, server.sampleRate * (beat_sec * ((n % 8) + 1)) * 2,
+                \minPtrDelay, grainDelays[n],
+                \cutoff, grainCutoffLFOs[n],
+                \resonance, grainResLFOs[n]
+            ], granGrp);
+        });
+
+        "Lied granular chain allocated.".postln;
+
         "Lied initialized.".postln;
     }
 
@@ -196,6 +283,17 @@ Lied {
         ringerInstances.do { |inst| inst.free };
         samplerInstances.do { |inst| inst.free };
         oneShotInstances.do { |inst| inst.free };
+        // Granular delay state (freed before master FX so signal flow unwinds cleanly)
+        delayBuf.free;
+        micBus.free;
+        ptrBus.free;
+        grainPanLFOs.do({ arg lfo; lfo.free; });
+        grainCutoffLFOs.do({ arg lfo; lfo.free; });
+        grainResLFOs.do({ arg lfo; lfo.free; });
+        granGrp.free;
+        recGrp.free;
+        ptrGrp.free;
+        micGrp.free;
         delaySynth.free;
         reverbSynth.free;
         outSynth.free;

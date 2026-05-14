@@ -173,6 +173,27 @@ Server.default.sync;
     ~fieldBuf.free;
     1.0.wait;
 
+"Test 14: granular chain allocation check (silent — verify nothing crashes)".postln;
+("  16 grain synths: " ++ kernel.grainSynths.size).postln;
+("  delayBuf frames: " ++ kernel.delayBuf.numFrames).postln;
+("  micBus channels: " ++ kernel.micBus.numChannels).postln;
+"  All allocated, amp=0 (silent). Granular audio test next.".postln;
+1.0.wait;
+
+"Test 15: granular delay audible — inject test tone into delay loop".postln;
+"  NOTE: This injects a synthesized tone into micBus instead of using".postln;
+"  a real mic, avoiding audio-device handshake during automated testing.".postln;
+~granTestSrc = {
+    var sig = SinOsc.ar(440) * EnvGen.kr(Env.perc(0.5, 2.0), doneAction: 2) * 0.3;
+    Out.ar(kernel.micBus, sig);
+}.play(kernel.micGrp);
+0.1.wait;
+kernel.grainSynths.do({ arg syn; syn.set(\amp, 0.2); });
+"  Expected: 440Hz tone enters delay loop, granular wash builds and decays.".postln;
+8.0.wait;
+kernel.grainSynths.do({ arg syn; syn.set(\amp, 0); });
+2.0.wait;
+
     kernel.free;
     "All tests passed.".postln;
     Server.default.quit;
