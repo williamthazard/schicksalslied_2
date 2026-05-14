@@ -339,6 +339,53 @@ function redraw()
 end
 
 -- ========================================================================
+-- HARDWARE KEYS (K1 / K2 / K3 — spec §11)
+-- ========================================================================
+
+local function tap_tempo()
+    local now = util.time()
+    table.insert(Tap_Tempo_Times, now)
+    if #Tap_Tempo_Times > 4 then
+        table.remove(Tap_Tempo_Times, 1)
+    end
+    if #Tap_Tempo_Times >= 2 then
+        local intervals = {}
+        for i = 2, #Tap_Tempo_Times do
+            table.insert(intervals, Tap_Tempo_Times[i] - Tap_Tempo_Times[i - 1])
+        end
+        local avg = 0
+        for _, v in ipairs(intervals) do avg = avg + v end
+        avg = avg / #intervals
+        local bpm = 60 / avg
+        bpm = util.clamp(bpm, 20, 400)
+        params:set('clock_tempo', bpm)
+        print(string.format('tap tempo: %.1f bpm', bpm))
+    end
+end
+
+local function panic()
+    Roles.free_all()
+    crow.ii.jf.run(0)
+    print('PANIC: freed all voices')
+end
+
+function key(n, z)
+    if z == 0 then return end
+    if n == 1 then
+        panic()
+    elseif n == 2 then
+        Sequencer.toggle_pause()
+        Grid_Dirty = true
+    elseif n == 3 then
+        tap_tempo()
+    end
+end
+
+function enc(n, d)
+    -- Reserved for future use; no encoder actions in Sub-plan B
+end
+
+-- ========================================================================
 -- INIT
 -- ========================================================================
 function init()
