@@ -14,6 +14,6 @@ Engine_Lied : CroneEngine {
     }
 
     free {
-        kernel.free();
+        kernel.free;
     }
 }

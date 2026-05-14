@@ -9,6 +9,10 @@ Routine({
     Server.default.options.numInputBusChannels = 0;
     "Booting SuperCollider server...".postln;
     Server.default.bootSync;
+    if (Server.default.serverRunning.not) {
+        "ERROR: Server failed to boot. Aborting.".postln;
+        1.exit;
+    };
     "Server booted.".postln;
     0.5.wait;
 
@@ -16,8 +20,8 @@ Routine({
     kernel = Lied.new(Server.default);
     2.0.wait;
 
-    "All tests passed.".postln;
     kernel.free;
+    "All tests passed.".postln;
     Server.default.quit;
     1.0.wait;
     0.exit;
