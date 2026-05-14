@@ -4,6 +4,11 @@ Lied {
     var <dryBus, <reverbBus, <delayBus;
     var <voiceGroup, <fxGroup, <outGroup;
     var <delaySynth, <reverbSynth, <outSynth;
+    var <beat_sec;                  // updated via setBeatSec from Lua
+    var <triSinInstances;           // Dictionary: cell_id (Symbol) → TriSin instance
+    var <ringerInstances;           // Dictionary: cell_id (Symbol) → Ringer instance
+    var <samplerInstances;          // Dictionary: slot (Integer)  → Sampler instance
+    var <oneShotInstances;          // Dictionary: slot (Integer)  → OneShot instance
 
     *new { arg server;
         ^super.new.init(server);
@@ -11,6 +16,11 @@ Lied {
 
     init { arg inServer;
         server = inServer ? Server.default;
+        beat_sec = 0.5;             // default = 120 BPM
+        triSinInstances  = Dictionary.new;
+        ringerInstances  = Dictionary.new;
+        samplerInstances = Dictionary.new;
+        oneShotInstances = Dictionary.new;
         "Lied init: allocating buses + master FX...".postln;
 
         // --- Audio buses ---
@@ -82,7 +92,16 @@ Lied {
         "Lied initialized.".postln;
     }
 
+    setBeatSec { arg newBeatSec;
+        beat_sec = newBeatSec;
+        ("Lied: beat_sec = " ++ beat_sec).postln;
+    }
+
     free {
+        triSinInstances.do { |inst| inst.free };
+        ringerInstances.do { |inst| inst.free };
+        samplerInstances.do { |inst| inst.free };
+        oneShotInstances.do { |inst| inst.free };
         delaySynth.free;
         reverbSynth.free;
         outSynth.free;

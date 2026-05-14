@@ -10,6 +10,11 @@ Engine_Lied : CroneEngine {
 
     alloc {
         kernel = Lied.new(context.server);
+
+        this.addCommand(\set_beat_sec, "f", { arg msg;
+            kernel.setBeatSec(msg[1]);
+        });
+
         "Engine_Lied alloc complete.".postln;
     }
 

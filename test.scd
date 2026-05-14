@@ -20,6 +20,16 @@ Routine({
     kernel = Lied.new(Server.default);
     1.0.wait;
 
+    "Test 4: setBeatSec updates kernel.beat_sec...".postln;
+    kernel.setBeatSec(0.25);    // 240 BPM
+    ("  Expected beat_sec=0.25, actual=" ++ kernel.beat_sec).postln;
+    if (kernel.beat_sec == 0.25, {
+        "  ✓ setBeatSec works".postln;
+    }, {
+        "  ✗ FAIL: setBeatSec did not update beat_sec".postln;
+    });
+    1.0.wait;
+
     // Test 1: dry bus passthrough — should hear a clean 440Hz tone for 1s
     "Test 1: dry bus passthrough (clean 440Hz, no FX)...".postln;
     testSynth = {
