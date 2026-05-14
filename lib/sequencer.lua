@@ -61,6 +61,7 @@ function Sequencer.init()
         end
     end
     init_seq_modes()
+    init_value_modes()
 end
 
 -- ========================================================================
@@ -259,6 +260,68 @@ function Sequencer.get_rate(x, y)
         return math.random(lo, hi)
     end
     return 1
+end
+
+-- ========================================================================
+-- VALUE MODE — value generation for sampler/one-shot cells
+-- ========================================================================
+-- Sampler trigger cells emit position + duration; sampler rate cells emit
+-- rate; one-shot cells emit rate. Each value has its own value_mode config
+-- with the same 4 options as seq_mode.
+--
+-- For Sub-plan B, all value_modes default to 'lied' (value derived from
+-- cell's sequins with role-specific mapping). Sub-plan C adds per-cell
+-- value_mode params.
+
+-- Value_Mode[x][y][value_kind] = { mode, args... }
+-- value_kind: 'position', 'duration', 'rate'
+Sequencer.Value_Mode = {}
+
+-- Default value_mode is always 'lied' for Sub-plan B; the mapping happens
+-- in cell_roles.dispatch (Phase 3 / Task 3.2).
+local function default_value_mode()
+    return { mode = 'lied' }
+end
+
+local function init_value_modes()
+    for x = 1, 16 do
+        Sequencer.Value_Mode[x] = {}
+        for y = 4, 8, 2 do  -- rows 4, 6, 8
+            Sequencer.Value_Mode[x][y] = {
+                position = default_value_mode(),
+                duration = default_value_mode(),
+                rate     = default_value_mode(),
+            }
+        end
+    end
+end
+
+-- Compute a value for cell [x][y]'s value_kind ('position'|'duration'|'rate').
+-- In 'lied' mode, returns nil — caller (cell_roles.dispatch) reads sequins
+-- directly and applies role-specific mapping.
+-- In 'fixed' mode, returns the configured fixed value.
+-- In 'user_seq', returns next value from the cell's configured pattern.
+-- In 'random', returns math.random(min, max).
+function Sequencer.get_value(x, y, value_kind)
+    local vm = Sequencer.Value_Mode[x]
+        and Sequencer.Value_Mode[x][y]
+        and Sequencer.Value_Mode[x][y][value_kind]
+    if vm == nil then return nil end  -- 'lied' fallback signaled by nil
+
+    if vm.mode == 'lied' then
+        return nil
+    elseif vm.mode == 'fixed' then
+        return vm.fixed_value
+    elseif vm.mode == 'user_seq' then
+        local pattern = vm.pattern  -- a Sequins instance stored at cell
+        if pattern then return pattern() end
+        return nil
+    elseif vm.mode == 'random' then
+        local lo = vm.random_min or 0
+        local hi = vm.random_max or 1
+        return math.random() * (hi - lo) + lo
+    end
+    return nil
 end
 
 return Sequencer
