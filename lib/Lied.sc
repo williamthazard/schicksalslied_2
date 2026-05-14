@@ -278,6 +278,42 @@ Lied {
         ("Lied: beat_sec = " ++ beat_sec).postln;
     }
 
+    setMicAmp { arg amp;
+        micSynth.set(\amp, amp);
+    }
+
+    setMicDryAmp { arg amp;
+        micDrySynth.set(\amp, amp);
+    }
+
+    setGranularOutAmp { arg amp;
+        granGrp.set(\amp, amp);  // single OSC msg updates all 16 grain synths
+    }
+
+    setFbPatchAmp { arg amp;
+        fbPatchMixSynth.set(\amp, amp);
+    }
+
+    setFbPatchBalance { arg balance;
+        fbPatchMixSynth.set(\balance, balance);
+    }
+
+    setFbPatchHpFreq { arg freq;
+        fbPatchMixSynth.set(\hpFreq, freq);
+    }
+
+    setFbPatchNoiseLevel { arg lvl;
+        fbPatchMixSynth.set(\noiseLevel, lvl);
+    }
+
+    setFbPatchSineLevel { arg lvl;
+        fbPatchMixSynth.set(\sineLevel, lvl);
+    }
+
+    setFbPatchSineHz { arg hz;
+        fbPatchMixSynth.set(\sineHz, hz);
+    }
+
     free {
         triSinInstances.do { |inst| inst.free };
         ringerInstances.do { |inst| inst.free };

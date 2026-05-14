@@ -194,6 +194,19 @@ kernel.grainSynths.do({ arg syn; syn.set(\amp, 0.2); });
 kernel.grainSynths.do({ arg syn; syn.set(\amp, 0); });
 2.0.wait;
 
+"Test 16: granular control commands (via kernel public methods)".postln;
+~granTestSrc2 = {
+    var sig = SinOsc.ar(330) * EnvGen.kr(Env.perc(0.5, 2.0), doneAction: 2) * 0.3;
+    Out.ar(kernel.micBus, sig);
+}.play(kernel.micGrp);
+0.1.wait;
+kernel.setGranularOutAmp(0.2);
+"  granular_out_amp = 0.2 (expecting wash to build)".postln;
+6.0.wait;
+kernel.setGranularOutAmp(0);
+"  granular_out_amp = 0 (expecting silence)".postln;
+2.0.wait;
+
     kernel.free;
     "All tests passed.".postln;
     Server.default.quit;
