@@ -149,7 +149,7 @@ Server.default.sync;
     ~oneShotTest.setParam('all', \bus, kernel.dryBus.index);
     ~oneShotTest.setParam('all', \amp, 0.5);
     ~oneShotTest.trigger(\1);
-    "  Expected: 0.5s noise burst.".postln;
+    "  Expected: ~1.6s sample playback (freed after 1s wait).".postln;
     1.0.wait;
     ~oneShotTest.free;
     ~oneShotBuf.free;
@@ -161,11 +161,11 @@ Server.default.sync;
     ~fieldTest = OneShot.new(~fieldBuf);
     ~fieldTest.setParam('all', \bus, kernel.dryBus.index);
     ~fieldTest.setParam('all', \amp, 0.5);
-    ~fieldTest.setParam('all', \amp_slew, 1.0);  // slow fade
+    ~fieldTest.setParam('all', \amp_slew, 0.3);  // slow but completes within test window
     ~fieldTest.trigger(\1);
     "  Long sample (~20s) starts playing...".postln;
     2.0.wait;
-    "  Mid-playback: setting amp=0 with 1s slew. Expected: smooth fade to silence.".postln;
+    "  Mid-playback: setting amp=0 with 0.3s slew. Expected: smooth fade to silence within 2s.".postln;
     ~fieldTest.setParam('all', \amp, 0);
     2.0.wait;
     "  ✓ if you heard a smooth fade with no click, real-time amp on long samples works".postln;

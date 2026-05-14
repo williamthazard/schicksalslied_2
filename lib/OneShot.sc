@@ -30,7 +30,7 @@ OneShot {
                         amp_slew = 0.05,
                         pan = 0,
                         pan_slew = 0.5,
-                        buf,
+                        buf = 0,
                         bus = 0;
 
                     var sig = PlayBuf.ar(1, buf, BufRateScale.ir(buf) * rate, t_gate);
