@@ -97,4 +97,80 @@ function Sequencer.next_byte(x, y)
     return string.byte(" ")
 end
 
+-- ========================================================================
+-- CLOCK LOOPS (per toggle cell)
+-- ========================================================================
+
+-- Forward reference: set by schicksalslied.lua's init() to cell_roles.dispatch.
+-- Decoupled from cell_roles here so sequencer doesn't require cell_roles at load time.
+Sequencer.dispatch_fn = nil
+
+-- Returns a coroutine body for cell [x][y]. Runs forever; gates on Toggled + Paused.
+local function step_for(x, y)
+    return function()
+        while true do
+            clock.sync(Sequencer.get_rate(x, y))
+            if Sequencer.Toggled[x][y] and (not Sequencer.Paused) then
+                if Sequencer.dispatch_fn then
+                    Sequencer.dispatch_fn(x, y)
+                end
+                -- Bump fire decay for LED flash visual (consumed by grid_redraw)
+                Sequencer.Fire_Decay[x][y] = 4
+            end
+        end
+    end
+end
+
+-- Start one clock loop per toggle cell (rows 2, 4, 6, 8 × 16 cols = 64 loops).
+-- Note: row 8 cols 14-16 are NOT sequencer triggers (they're mic/granular
+-- on/off toggles); their clock loops still run but their roles do nothing
+-- on tick. See cell_roles.lua's row-8 cols 14-16 handling.
+function Sequencer.start_all_clocks()
+    for x = 1, 16 do
+        for y = 2, 8, 2 do  -- rows 2, 4, 6, 8
+            Sequencer.Clock_Ids[x][y] = clock.run(step_for(x, y))
+        end
+    end
+end
+
+-- Stop all clock loops. Called from schicksalslied.cleanup().
+function Sequencer.stop_all_clocks()
+    for x = 1, 16 do
+        for y = 2, 8, 2 do
+            if Sequencer.Clock_Ids[x][y] then
+                clock.cancel(Sequencer.Clock_Ids[x][y])
+                Sequencer.Clock_Ids[x][y] = nil
+            end
+        end
+    end
+end
+
+-- ========================================================================
+-- PAUSE / RESUME (K2 — clock-quantized)
+-- ========================================================================
+
+-- K2 press handler. Toggles Paused via a 1-beat-quantized pending flag.
+-- Pause arrives on the next beat boundary; resume similarly delayed.
+function Sequencer.toggle_pause()
+    if Sequencer.Paused then
+        if not Sequencer.Unpause_Pending then
+            Sequencer.Unpause_Pending = true
+            clock.run(function()
+                clock.sync(1)
+                Sequencer.Paused = false
+                Sequencer.Unpause_Pending = false
+            end)
+        end
+    else
+        if not Sequencer.Pause_Pending then
+            Sequencer.Pause_Pending = true
+            clock.run(function()
+                clock.sync(1)
+                Sequencer.Paused = true
+                Sequencer.Pause_Pending = false
+            end)
+        end
+    end
+end
+
 return Sequencer
