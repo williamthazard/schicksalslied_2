@@ -108,6 +108,22 @@ Routine({
 ~ringerTest.free;
 1.0.wait;
 
+"Test 10: Sampler — load audio/test_long.wav, trigger, hear playback".postln;
+~samplerBuf = Buffer.read(Server.default, "audio/test_long.wav");
+Server.default.sync;
+("  Loaded buffer: " ++ ~samplerBuf.numFrames ++ " frames, "
+    ++ ~samplerBuf.numChannels ++ " channels").postln;
+
+~samplerTest = Sampler.new(~samplerBuf);
+~samplerTest.setParam('all', \bus, kernel.dryBus.index);
+~samplerTest.setParam('all', \amp, 0.5);
+~samplerTest.trigger(\1, 0.0, 1.0, 1);   // play full buffer
+"  Expected: full test_long.wav plays at original rate.".postln;
+6.0.wait;
+~samplerTest.free;
+~samplerBuf.free;
+1.0.wait;
+
     kernel.free;
     "All tests passed.".postln;
     Server.default.quit;
