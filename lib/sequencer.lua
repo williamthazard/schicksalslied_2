@@ -60,8 +60,8 @@ function Sequencer.init()
             Sequencer.Fire_Decay[x][y] = 0
         end
     end
-    init_seq_modes()
-    init_value_modes()
+    Sequencer._init_seq_modes()
+    Sequencer._init_value_modes()
 end
 
 -- ========================================================================
@@ -226,7 +226,7 @@ local function default_seq_mode_for(x, y)
 end
 
 -- Populate defaults — call from Sequencer.init()
-local function init_seq_modes()
+function Sequencer._init_seq_modes()
     for x = 1, 16 do
         Sequencer.Seq_Mode[x] = {}
         for y = 2, 8, 2 do
@@ -283,7 +283,7 @@ local function default_value_mode()
     return { mode = 'lied' }
 end
 
-local function init_value_modes()
+function Sequencer._init_value_modes()
     for x = 1, 16 do
         Sequencer.Value_Mode[x] = {}
         for y = 4, 8, 2 do  -- rows 4, 6, 8
