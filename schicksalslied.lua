@@ -308,6 +308,37 @@ function grid_redraw()
 end
 
 -- ========================================================================
+-- SCREEN REDRAW (spec §11 two-string layout)
+-- ========================================================================
+
+function redraw()
+    screen.clear()
+    screen.level(10)
+
+    -- Input box at the bottom (y 50-64)
+    screen.rect(2, 50, 125, 14)
+    screen.stroke()
+    screen.move(5, 59)
+    screen.text("> " .. Displayed_String)
+
+    -- Staged line indicator at y≈40 — only show if My_String is non-empty AND
+    -- different from Displayed_String (avoid redundant display right after ENTER)
+    if #My_String > 0 and My_String ~= Displayed_String then
+        screen.move(5, 40)
+        screen.text("* " .. My_String)
+    end
+
+    -- History items above (up to 4-5 lines, scrolling up)
+    for i = 1, 5 do
+        if not (History_Index - i >= 0) then break end
+        screen.move(5, 32 - 10 * (i - 1))
+        screen.text(History[History_Index - i + 1] or "")
+    end
+
+    screen.update()
+end
+
+-- ========================================================================
 -- INIT
 -- ========================================================================
 function init()
