@@ -55,4 +55,205 @@ function Roles.is_active(Sequencer, x, y)
     return Sequencer.Toggled[x][y] == true
 end
 
+-- ========================================================================
+-- ROLE DISPATCH TABLE
+-- ========================================================================
+-- Each role dispatch reads bytes from the cell's sequins (via Sequencer),
+-- applies role-specific mapping, and fires the appropriate engine or crow
+-- method. Set Roles.Sequencer = <sequencer_module> at init time so the
+-- dispatch functions can access the state.
+
+Roles.Sequencer = nil  -- set by schicksalslied.lua's init()
+
+-- Round-robin counters for voice keys per cell (TriSin/Ringer).
+-- Index by cell_id string. Polyphony pool size is per cell (default 4).
+Roles.rr_counter = {}
+Roles.polyphony = {}  -- per cell, 1-8, default 4. Sub-plan C wires per-cell params.
+
+local function next_voice_key(cell_id, default_poly)
+    local poly = Roles.polyphony[cell_id] or default_poly or 4
+    Roles.rr_counter[cell_id] = ((Roles.rr_counter[cell_id] or 0) % poly) + 1
+    return Roles.rr_counter[cell_id]
+end
+
+-- Per-cell w/tape looper "is this cell's looper currently running?" flag.
+-- Prevents stacking concurrent loopers from rapid retriggers of the same cell.
+Roles.looper_running = {}
+
+-- The 10 row-2 role dispatchers
+Roles.dispatch_row_2 = {
+
+    ['TriSin'] = function(x, y, seq)
+        local cell_id = Roles.cell_id(x, y)
+        local note = seq() % 32 + 49
+        local freq = MusicUtil.note_num_to_freq(note)
+        local voice_key = next_voice_key(cell_id, 4)
+        engine.trisin_trigger(cell_id, voice_key, freq)
+    end,
+
+    ['Ringer'] = function(x, y, seq)
+        local cell_id = Roles.cell_id(x, y)
+        local note = seq() % 32 + 49
+        local freq = MusicUtil.note_num_to_freq(note)
+        local voice_key = next_voice_key(cell_id, 4)
+        engine.ringer_trigger(cell_id, voice_key, freq)
+    end,
+
+    ['crow 1+2'] = function(x, y, seq)
+        -- consumes 4 bytes: pitch (v/oct), slew, attack, release
+        crow.output[1].volts = (seq() % 32 + 1) / 12
+        crow.output[1].slew = (seq() % 32 + 1) / 300
+        crow.output[2].action = "{to(5,dyn{attack=1}), to(0,dyn{release=1})}"
+        crow.output[2].dyn.attack = (seq() % 32 + 1) / 40
+        crow.output[2].dyn.release = (seq() % 32 + 1) / 40
+        crow.output[2]()
+    end,
+
+    ['crow 3+4'] = function(x, y, seq)
+        crow.output[3].volts = (seq() % 32 + 1) / 12
+        crow.output[3].slew = (seq() % 32 + 1) / 300
+        crow.output[4].action = "{to(5,dyn{attack=1}), to(0,dyn{release=1})}"
+        crow.output[4].dyn.attack = (seq() % 32 + 1) / 40
+        crow.output[4].dyn.release = (seq() % 32 + 1) / 40
+        crow.output[4]()
+    end,
+
+    ['JF'] = function(x, y, seq)
+        -- consumes 2 bytes: pitch (v/oct), level (1-6 via %5+1)
+        local pitch = (seq() % 32 + 1) / 12
+        local level = seq() % 5 + 1
+        crow.ii.jf.play_note(pitch, level)  -- JF handles voice allocation
+    end,
+
+    ['JF run'] = function(x, y, seq)
+        crow.ii.jf.run(seq() % 32 + 1)
+    end,
+
+    ['JF quantize'] = function(x, y, seq)
+        crow.ii.jf.quantize(seq() % 32 + 1)
+    end,
+
+    ['w/syn'] = function(x, y, seq)
+        local pitch = (seq() % 32 + 1) / 12
+        local level = seq() % 5 + 1
+        crow.ii.wsyn.play_note(pitch, level)
+    end,
+
+    ['w/del'] = function(x, y, seq)
+        -- pluck event: time, freq, pluck level
+        crow.ii.wdel.time(0)
+        crow.ii.wdel.freq((seq() % 32 + 1) / 12)
+        crow.ii.wdel.pluck(seq() % 5 + 1)
+    end,
+
+    ['w/tape looper'] = function(x, y, seq)
+        local cell_id = Roles.cell_id(x, y)
+        if Roles.looper_running[cell_id] then return end  -- prevent re-entry
+        Roles.looper_running[cell_id] = true
+        local Looper = require 'lib/wtape_looper'
+        clock.run(function()
+            Looper.run(seq)
+            Roles.looper_running[cell_id] = false
+        end)
+    end,
+}
+
+-- Sampler trigger cells (rows 4/6 odd cols 1/3/5/7/9/11/13/15)
+-- Maps: row 4 odd col K → sampler slot (K+1)/2;  row 6 odd col K → sampler slot 8 + (K+1)/2
+local function sampler_slot_for(x, y)
+    local base = (y == 4) and 0 or 8
+    return base + (math.floor(x / 2) + 1)
+end
+
+local function dispatch_sampler_trigger(x, y, seq)
+    local slot = sampler_slot_for(x, y)
+    local cell_id = Roles.cell_id(x, y)
+    local poly = Roles.polyphony[cell_id] or 1
+    local voice_key = next_voice_key(cell_id, poly)
+    -- Default 'lied' mode: read 2 bytes for position/duration
+    local pos_value = Roles.Sequencer.get_value(x, y, 'position')
+    local dur_value = Roles.Sequencer.get_value(x, y, 'duration')
+    local start_pos, end_pos
+    if pos_value == nil then
+        start_pos = util.linlin(36, 62, 0, 0.9, seq())  -- lied mode: from sequins
+    else
+        start_pos = pos_value
+    end
+    if dur_value == nil then
+        end_pos = start_pos + util.linlin(36, 62, 0.001, 0.1, seq())
+    else
+        end_pos = start_pos + dur_value
+    end
+    -- Rate: read from PAIRED rate-control cell's sequins or value_mode
+    -- For trigger cell at (x, y), the rate cell is at (x + 1, y)
+    local rate_value = Roles.Sequencer.get_value(x + 1, y, 'rate')
+    local rate
+    if rate_value == nil then
+        rate = 1  -- naherinlied's `(S-35)/(S-35)` is always 1
+    else
+        rate = rate_value
+    end
+    engine.sampler_trigger(slot, voice_key, start_pos, end_pos, rate)
+end
+
+local function dispatch_sampler_rate(x, y, seq)
+    -- Rate cells don't trigger directly; their sequins feeds the PAIRED
+    -- trigger cell. But the rate cell also has a clock loop. On its tick,
+    -- it could update the sampler's rate param directly.
+    local slot = sampler_slot_for(x - 1, y)
+    local rate_value = Roles.Sequencer.get_value(x, y, 'rate')
+    local rate
+    if rate_value == nil then
+        rate = 1  -- lied mode default for current implementation
+    else
+        rate = rate_value
+    end
+    engine.sampler_set_param(slot, 'rate', rate)
+end
+
+-- One-shot row 8 cols 1-13
+local function dispatch_oneshot_trigger(x, y, seq)
+    local slot = x  -- one-shot slot = col number for x = 1..13
+    local cell_id = Roles.cell_id(x, y)
+    local voice_key = next_voice_key(cell_id, 1)
+    local rate_value = Roles.Sequencer.get_value(x, y, 'rate')
+    local rate
+    if rate_value == nil then
+        -- lied mode: rate from sequins. Use byte / 36 for typical range 1.0–2.0
+        rate = seq() / 36
+    else
+        rate = rate_value
+    end
+    engine.oneshot_trigger(slot, voice_key, rate)
+end
+
+-- ========================================================================
+-- TOP-LEVEL DISPATCH
+-- ========================================================================
+-- Called by sequencer's clock loops via Sequencer.dispatch_fn.
+
+function Roles.dispatch(x, y)
+    local seq = Roles.Sequencer.Seq[x][y]
+    -- Wrap seq into a function that just returns the next byte
+    local seq_fn = function() return seq() end
+
+    if y == 2 then
+        local role = Roles.cell_role[x]
+        local fn = Roles.dispatch_row_2[role]
+        if fn then fn(x, y, seq_fn) end
+    elseif y == 4 or y == 6 then
+        if x % 2 == 1 then
+            dispatch_sampler_trigger(x, y, seq_fn)
+        else
+            dispatch_sampler_rate(x, y, seq_fn)
+        end
+    elseif y == 8 then
+        if x <= 13 then
+            dispatch_oneshot_trigger(x, y, seq_fn)
+        end
+        -- cols 14-16 are mic/granular on/off toggles; no per-tick action.
+        -- The toggle press handler in schicksalslied.lua manages their amps.
+    end
+end
+
 return Roles
