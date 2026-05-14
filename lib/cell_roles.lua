@@ -2,6 +2,7 @@
 -- Owns: role enum, dispatch table, lazy alloc of SC voice instances per cell
 
 local MusicUtil = require 'musicutil'
+local Looper = include 'lib/wtape_looper'
 local Roles = {}
 
 -- ========================================================================
@@ -152,7 +153,6 @@ Roles.dispatch_row_2 = {
         -- consumes 4 bytes: pitch (v/oct), slew, attack, release
         crow.output[1].volts = (seq() % 32 + 1) / 12
         crow.output[1].slew = (seq() % 32 + 1) / 300
-        crow.output[2].action = "{to(5,dyn{attack=1}), to(0,dyn{release=1})}"
         crow.output[2].dyn.attack = (seq() % 32 + 1) / 40
         crow.output[2].dyn.release = (seq() % 32 + 1) / 40
         crow.output[2]()
@@ -161,7 +161,6 @@ Roles.dispatch_row_2 = {
     ['crow 3+4'] = function(x, y, seq)
         crow.output[3].volts = (seq() % 32 + 1) / 12
         crow.output[3].slew = (seq() % 32 + 1) / 300
-        crow.output[4].action = "{to(5,dyn{attack=1}), to(0,dyn{release=1})}"
         crow.output[4].dyn.attack = (seq() % 32 + 1) / 40
         crow.output[4].dyn.release = (seq() % 32 + 1) / 40
         crow.output[4]()
@@ -175,11 +174,11 @@ Roles.dispatch_row_2 = {
     end,
 
     ['JF run'] = function(x, y, seq)
-        crow.ii.jf.run(seq() % 32 + 1)
+        crow.ii.jf.run((seq() % 32 + 1) / 12)
     end,
 
     ['JF quantize'] = function(x, y, seq)
-        crow.ii.jf.quantize(seq() % 32 + 1)
+        crow.ii.jf.quantize((seq() % 32 + 1) / 12)
     end,
 
     ['w/syn'] = function(x, y, seq)
@@ -199,7 +198,6 @@ Roles.dispatch_row_2 = {
         local cell_id = Roles.cell_id(x, y)
         if Roles.looper_running[cell_id] then return end  -- prevent re-entry
         Roles.looper_running[cell_id] = true
-        local Looper = require 'lib/wtape_looper'
         clock.run(function()
             Looper.run(seq)
             Roles.looper_running[cell_id] = false
@@ -224,12 +222,12 @@ local function dispatch_sampler_trigger(x, y, seq)
     local dur_value = Roles.Sequencer.get_value(x, y, 'duration')
     local start_pos, end_pos
     if pos_value == nil then
-        start_pos = util.linlin(36, 62, 0, 0.9, seq())  -- lied mode: from sequins
+        start_pos = util.clamp(util.linlin(32, 126, 0, 0.9, seq()), 0, 0.9)
     else
         start_pos = pos_value
     end
     if dur_value == nil then
-        end_pos = start_pos + util.linlin(36, 62, 0.001, 0.1, seq())
+        end_pos = start_pos + util.clamp(util.linlin(32, 126, 0.001, 0.1, seq()), 0.001, 0.1)
     else
         end_pos = start_pos + dur_value
     end

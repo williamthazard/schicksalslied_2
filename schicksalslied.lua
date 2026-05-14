@@ -54,6 +54,11 @@ function crow_reinit()
     crow.ii.wsyn.voices(params:get('wsyn_voices') or 4)
     crow.ii.wsyn.patch(1, 1)
     crow.ii.wsyn.patch(2, 2)
+    -- AR envelope action shape for crow outputs 2 and 4 (used by
+    -- 'crow 1+2' and 'crow 3+4' role dispatchers); per-cell only
+    -- updates the dyn.* variables, not the action string.
+    crow.output[2].action = "{to(5,dyn{attack=1}), to(0,dyn{release=1})}"
+    crow.output[4].action = "{to(5,dyn{attack=1}), to(0,dyn{release=1})}"
     print('crow re-initialized')
 end
 
