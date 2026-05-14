@@ -199,6 +199,115 @@ keyboard.code = function(code, val)
 end
 
 -- ========================================================================
+-- GRID HANDLER (spec §3 + §11)
+-- ========================================================================
+
+G.key = function(x, y, z)
+    Sequencer.Momentary[x][y] = (z == 1)
+    Grid_Dirty = true
+
+    if y == 1 then
+        -- History row
+        if x + 16 * (y - 1) > #History then return end
+        if z == 1 then
+            -- Press: append history[x + 16*(y-1)] to Displayed_String
+            My_String = Displayed_String .. History[x + 16 * (y - 1)]
+            Displayed_String = My_String
+        else
+            -- Release: check if any other row-1 buttons are still held
+            local any_held = false
+            for col = 1, 16 do
+                if Sequencer.Momentary[col][1] then any_held = true; break end
+            end
+            if any_held then return end
+            -- All released — set My_String from current Displayed_String
+            if #Displayed_String > 0 then
+                My_String = Displayed_String
+            end
+            Displayed_String = ""
+            New_Line = true
+        end
+
+    elseif y == 2 or y == 4 or y == 6 or y == 8 then
+        -- Toggle row
+        if z == 1 then
+            -- Row 8 cols 14-16: special on/off for mic/granular amps
+            if y == 8 and x >= 14 and x <= 16 then
+                Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
+                local on_value
+                local set_fn
+                if x == 14 then
+                    on_value = params:get('mic_to_delay_amp')
+                    set_fn = function(v) engine.set_mic_amp(v) end
+                elseif x == 15 then
+                    on_value = params:get('granular_out_amp')
+                    set_fn = function(v) engine.set_granular_out_amp(v) end
+                else  -- x == 16
+                    on_value = params:get('mic_dry_amp')
+                    set_fn = function(v) engine.set_mic_dry_amp(v) end
+                end
+                set_fn(Sequencer.Toggled[x][y] and on_value or 0)
+            else
+                -- Regular sequencer toggle
+                Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
+                if y == 2 and Sequencer.Toggled[x][y] then
+                    Roles.ensure_allocated(x, y)
+                end
+            end
+        end
+
+    elseif y == 3 or y == 5 or y == 7 then
+        -- Assign row: press assigns My_String to the cell at (x, y-1)
+        if z == 1 then
+            if #My_String > 0 then
+                Sequencer.assign(x, y - 1, My_String)
+            end
+        end
+    end
+end
+
+-- ========================================================================
+-- GRID LED RENDERING (spec §11 brightness table)
+-- ========================================================================
+
+function grid_redraw()
+    G:all(0)
+    -- Row 1: history slots. 0 if empty, 4 if filled, 15 if held
+    for x = 1, 16 do
+        local idx = x  -- slot index = col for row 1
+        if idx <= #History then
+            G:led(x, 1, 4)
+        end
+        if Sequencer.Momentary[x][1] then
+            G:led(x, 1, 15)
+        end
+    end
+    -- Rows 2/4/6/8 (toggle rows): 0 idle, 15 toggled-on, 15 held.
+    -- When Paused, toggled-on dims to 6.
+    for x = 1, 16 do
+        for y = 2, 8, 2 do
+            if Sequencer.Toggled[x][y] then
+                local level = Sequencer.Paused and 6 or 15
+                G:led(x, y, level)
+            end
+            if Sequencer.Momentary[x][y] then
+                G:led(x, y, 15)
+            end
+        end
+    end
+    -- Rows 3/5/7 (momentary): 4 idle, 15 held
+    for x = 1, 16 do
+        for y = 3, 7, 2 do
+            G:led(x, y, 4)
+            if Sequencer.Momentary[x][y] then
+                G:led(x, y, 15)
+            end
+        end
+    end
+    G:refresh()
+end
+
+-- ========================================================================
 -- INIT
 -- ========================================================================
 function init()
