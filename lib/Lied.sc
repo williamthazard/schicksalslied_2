@@ -2,7 +2,7 @@
 Lied {
     var <server;
     var <dryBus, <reverbBus, <delayBus;
-    var <voiceGroup, <fxGroup;
+    var <voiceGroup, <fxGroup, <outGroup;
     var <delaySynth, <reverbSynth, <outSynth;
 
     *new { arg server;
@@ -29,14 +29,24 @@ Lied {
         fxGroup    = Group.after(voiceGroup);
 
         // --- SynthDefs: master FX ---
+        // NOTE: norns-ritual wraps SynthDef definitions in `server.bind { ... }`,
+        // but that pattern is unreliable in CLI-launched sclang (test.scd) — the
+        // bundle mechanism races with `server.sync` and triggers "SynthDef X not
+        // found" when the FX synth allocation immediately follows. Direct .add
+        // calls + server.sync works reliably across both CLI and IDE contexts.
+
         // Delay reads delayBus → output to dryBus AND reverbBus (delay → reverb chain)
+        // NOTE: CombL.ar's 4th arg is `decayTime` (time to decay 60 dB), not a
+        // feedback amplitude coefficient. Naming the arg `decayTime` matches SC's
+        // own terminology and avoids confusing the Lua-side param wiring later.
         SynthDef(\liedDelay, {
-            arg inBus, dryOut, reverbOut, delayTime = 0.3, feedback = 0.5,
+            arg inBus, dryOut, reverbOut, delayTime = 0.3, decayTime = 0.5,
                 amp = 1.0, amp_slew = 0.1;
             var sig = In.ar(inBus, 2);
-            var del = CombL.ar(sig, 2.0, delayTime, feedback);
-            Out.ar(dryOut,    del * amp.lag(amp_slew));
-            Out.ar(reverbOut, del * amp.lag(amp_slew));
+            var del = CombL.ar(sig, 2.0, delayTime, decayTime);
+            var ampSmoothed = amp.lag(amp_slew);
+            Out.ar(dryOut,    del * ampSmoothed);
+            Out.ar(reverbOut, del * ampSmoothed);
         }).add;
 
         // Reverb reads reverbBus → output to dryBus
@@ -64,9 +74,10 @@ Lied {
         reverbSynth = Synth.new(\liedReverb,
             [\inBus, reverbBus, \dryOut, dryBus],
             fxGroup);
+        outGroup    = Group.after(fxGroup);
         outSynth    = Synth.new(\liedOut,
             [\inBus, dryBus],
-            Group.after(fxGroup));
+            outGroup);
 
         "Lied initialized.".postln;
     }
@@ -75,6 +86,7 @@ Lied {
         delaySynth.free;
         reverbSynth.free;
         outSynth.free;
+        outGroup.free;
         voiceGroup.free;
         fxGroup.free;
         dryBus.free;
