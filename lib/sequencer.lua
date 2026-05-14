@@ -62,4 +62,39 @@ function Sequencer.init()
     end
 end
 
+-- ========================================================================
+-- ASCII / SEQUINS HELPERS
+-- ========================================================================
+
+-- Convert a Lua string to a table of ASCII byte values.
+-- Empty string returns { string.byte(' ') } as a safe placeholder.
+function Sequencer.string_to_bytes(s)
+    if s == nil or #s == 0 then
+        return { string.byte(" ") }
+    end
+    local t = {}
+    for i = 1, #s do
+        table.insert(t, string.byte(s, i))
+    end
+    return t
+end
+
+-- Assign a new byte sequence to the cell's Sequins instance.
+-- Used by odd-row grid presses (rows 3, 5, 7) which target the cell ABOVE
+-- in the corresponding even row (y - 1).
+function Sequencer.assign(x, y, str)
+    if Sequencer.Seq[x] and Sequencer.Seq[x][y] then
+        Sequencer.Seq[x][y]:settable(Sequencer.string_to_bytes(str))
+    end
+end
+
+-- Read the next byte from a cell's sequins. Returns the raw byte value.
+-- Called by cell_roles.dispatch for the cell's role-specific mapping.
+function Sequencer.next_byte(x, y)
+    if Sequencer.Seq[x] and Sequencer.Seq[x][y] then
+        return Sequencer.Seq[x][y]()
+    end
+    return string.byte(" ")
+end
+
 return Sequencer
