@@ -149,6 +149,56 @@ local function add_params()
 end
 
 -- ========================================================================
+-- KEYBOARD HANDLER (spec §11 — two-variable text input model)
+-- ========================================================================
+
+keyboard.char = function(character)
+    if #Displayed_String < 200 then
+        Displayed_String = Displayed_String .. character
+    end
+end
+
+keyboard.code = function(code, val)
+    if val == 0 then return end
+    if code == 'BACKSPACE' then
+        Displayed_String = Displayed_String:sub(1, -2)
+    elseif code == 'UP' then
+        if #History == 0 then return end
+        if New_Line then
+            History_Index = #History - 1
+            New_Line = false
+        else
+            History_Index = util.clamp(History_Index - 1, 0, #History)
+        end
+        Displayed_String = History[History_Index + 1] or ""
+    elseif code == 'DOWN' then
+        if #History == 0 or History_Index == nil then return end
+        History_Index = util.clamp(History_Index + 1, 0, #History)
+        if History_Index == #History then
+            Displayed_String = ""
+            New_Line = true
+        else
+            Displayed_String = History[History_Index + 1] or ""
+        end
+    elseif code == 'ENTER' and #Displayed_String > 0 then
+        -- ENTER promotes Displayed_String to My_String, adds to History,
+        -- clears Displayed_String (per spec §7 text input flow)
+        My_String = Displayed_String
+        table.insert(History, Displayed_String)
+        Displayed_String = ""
+        History_Index = #History
+        New_Line = true
+        Grid_Dirty = true
+    elseif keyboard.ctrl() then
+        -- Ctrl chord: remove last History entry, clear Displayed_String
+        table.remove(History, #History)
+        History_Index = #History
+        Displayed_String = ""
+        Grid_Dirty = true
+    end
+end
+
+-- ========================================================================
 -- INIT
 -- ========================================================================
 function init()
