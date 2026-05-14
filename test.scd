@@ -73,6 +73,23 @@ Routine({
 ~triSinTest.free;
 1.0.wait;
 
+"Test 7: TriSin polyphony — fire 4 notes in rapid succession on different voiceKeys".postln;
+~triSinPoly = TriSin.new;
+~triSinPoly.setParam('all', \bus, kernel.dryBus.index);
+~triSinPoly.setParam('all', \amp, 0.3);
+~triSinPoly.setParam('all', \release, 3.0);  // long release so notes overlap
+~triSinPoly.trigger(\1, 261.6);   // C4
+0.3.wait;
+~triSinPoly.trigger(\2, 329.6);   // E4
+0.3.wait;
+~triSinPoly.trigger(\3, 392.0);   // G4
+0.3.wait;
+~triSinPoly.trigger(\4, 523.3);   // C5
+"  Expected: 4 notes stacking into a C major chord with overlapping releases.".postln;
+3.0.wait;
+~triSinPoly.free;
+1.0.wait;
+
     kernel.free;
     "All tests passed.".postln;
     Server.default.quit;
