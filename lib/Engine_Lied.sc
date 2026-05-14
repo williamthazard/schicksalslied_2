@@ -24,6 +24,84 @@ Engine_Lied : CroneEngine {
         this.addCommand(\set_fb_sine_level,   "f", { arg msg; kernel.setFbPatchSineLevel(msg[1]); });
         this.addCommand(\set_fb_sine_hz,      "f", { arg msg; kernel.setFbPatchSineHz(msg[1]); });
 
+        // -----------------------------------------------------------------
+        // Voice instance lifecycle (per row-2 cell, cellId is string)
+        // -----------------------------------------------------------------
+
+        this.addCommand(\trisin_alloc, "s", { arg msg;
+            kernel.allocTriSin(msg[1].asSymbol);
+        });
+        this.addCommand(\trisin_free, "s", { arg msg;
+            kernel.freeTriSin(msg[1].asSymbol);
+        });
+        this.addCommand(\trisin_trigger, "sif", { arg msg;
+            var cellId = msg[1].asSymbol;
+            var voiceKey = msg[2].asInteger.asString.asSymbol;
+            var freq = msg[3];
+            kernel.triggerTriSin(cellId, voiceKey, freq);
+        });
+        this.addCommand(\trisin_set_param, "ssf", { arg msg;
+            kernel.setTriSinParam(msg[1].asSymbol, msg[2].asSymbol, msg[3]);
+        });
+
+        this.addCommand(\ringer_alloc, "s", { arg msg;
+            kernel.allocRinger(msg[1].asSymbol);
+        });
+        this.addCommand(\ringer_free, "s", { arg msg;
+            kernel.freeRinger(msg[1].asSymbol);
+        });
+        this.addCommand(\ringer_trigger, "sif", { arg msg;
+            var cellId = msg[1].asSymbol;
+            var voiceKey = msg[2].asInteger.asString.asSymbol;
+            var freq = msg[3];
+            kernel.triggerRinger(cellId, voiceKey, freq);
+        });
+        this.addCommand(\ringer_set_param, "ssf", { arg msg;
+            kernel.setRingerParam(msg[1].asSymbol, msg[2].asSymbol, msg[3]);
+        });
+
+        // -----------------------------------------------------------------
+        // Sampler instance lifecycle (per row-4/6 slot, integer 1-16)
+        // -----------------------------------------------------------------
+
+        this.addCommand(\sampler_load, "is", { arg msg;
+            kernel.loadSampler(msg[1].asInteger, msg[2].asString);
+        });
+        this.addCommand(\sampler_clear, "i", { arg msg;
+            kernel.clearSampler(msg[1].asInteger);
+        });
+        this.addCommand(\sampler_trigger, "iifff", { arg msg;
+            var slot = msg[1].asInteger;
+            var voiceKey = msg[2].asInteger.asString.asSymbol;
+            var startPos = msg[3];
+            var endPos = msg[4];
+            var rate = msg[5];
+            kernel.triggerSampler(slot, voiceKey, startPos, endPos, rate);
+        });
+        this.addCommand(\sampler_set_param, "isf", { arg msg;
+            kernel.setSamplerParam(msg[1].asInteger, msg[2].asSymbol, msg[3]);
+        });
+
+        // -----------------------------------------------------------------
+        // OneShot instance lifecycle (per row-8 slot, integer 1-13)
+        // -----------------------------------------------------------------
+
+        this.addCommand(\oneshot_load, "is", { arg msg;
+            kernel.loadOneShot(msg[1].asInteger, msg[2].asString);
+        });
+        this.addCommand(\oneshot_clear, "i", { arg msg;
+            kernel.clearOneShot(msg[1].asInteger);
+        });
+        this.addCommand(\oneshot_trigger, "iif", { arg msg;
+            var slot = msg[1].asInteger;
+            var voiceKey = msg[2].asInteger.asString.asSymbol;
+            var rate = msg[3];
+            kernel.triggerOneShot(slot, voiceKey, rate);
+        });
+        this.addCommand(\oneshot_set_param, "isf", { arg msg;
+            kernel.setOneShotParam(msg[1].asInteger, msg[2].asSymbol, msg[3]);
+        });
+
         "Engine_Lied alloc complete.".postln;
     }
 
