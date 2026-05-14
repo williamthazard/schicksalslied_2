@@ -124,6 +124,24 @@ Server.default.sync;
 ~samplerBuf.free;
 1.0.wait;
 
+"Test 11: Sampler crossfade — rapid retriggers at 16th-note intervals (~250ms)".postln;
+~xfBuf = Buffer.read(Server.default, "audio/test_long.wav");
+Server.default.sync;
+~xfSampler = Sampler.new(~xfBuf);
+~xfSampler.setParam('all', \bus, kernel.dryBus.index);
+~xfSampler.setParam('all', \amp, 0.3);
+"  Expected: 16 retriggers, each cutting cleanly to the next.".postln;
+"  Failure mode: audible clicks/pops on each retrigger.".postln;
+16.do({ arg i;
+    var startPos = i.linlin(0, 16, 0.0, 0.8);
+    var endPos   = startPos + 0.05;
+    ~xfSampler.trigger(\1, startPos, endPos, 1);
+    0.25.wait;
+});
+~xfSampler.free;
+~xfBuf.free;
+1.0.wait;
+
     kernel.free;
     "All tests passed.".postln;
     Server.default.quit;
