@@ -142,6 +142,37 @@ Server.default.sync;
 ~xfBuf.free;
 1.0.wait;
 
+    "Test 12: OneShot — basic trigger, hear a quick noise burst".postln;
+    ~oneShotBuf = Buffer.read(Server.default, "audio/test_oneshot.wav");
+    Server.default.sync;
+    ~oneShotTest = OneShot.new(~oneShotBuf);
+    ~oneShotTest.setParam('all', \bus, kernel.dryBus.index);
+    ~oneShotTest.setParam('all', \amp, 0.5);
+    ~oneShotTest.trigger(\1);
+    "  Expected: 0.5s noise burst.".postln;
+    1.0.wait;
+    ~oneShotTest.free;
+    ~oneShotBuf.free;
+    1.0.wait;
+
+    "Test 13: OneShot long-sample fade-out (spec §14 test #7)".postln;
+    ~fieldBuf = Buffer.read(Server.default, "audio/test_field.wav");
+    Server.default.sync;
+    ~fieldTest = OneShot.new(~fieldBuf);
+    ~fieldTest.setParam('all', \bus, kernel.dryBus.index);
+    ~fieldTest.setParam('all', \amp, 0.5);
+    ~fieldTest.setParam('all', \amp_slew, 1.0);  // slow fade
+    ~fieldTest.trigger(\1);
+    "  Long sample (~20s) starts playing...".postln;
+    2.0.wait;
+    "  Mid-playback: setting amp=0 with 1s slew. Expected: smooth fade to silence.".postln;
+    ~fieldTest.setParam('all', \amp, 0);
+    2.0.wait;
+    "  ✓ if you heard a smooth fade with no click, real-time amp on long samples works".postln;
+    ~fieldTest.free;
+    ~fieldBuf.free;
+    1.0.wait;
+
     kernel.free;
     "All tests passed.".postln;
     Server.default.quit;
