@@ -56,6 +56,53 @@ function Roles.is_active(Sequencer, x, y)
 end
 
 -- ========================================================================
+-- LAZY ALLOCATION (Approach C from spec §4)
+-- ========================================================================
+-- Track which cells have an active SC instance allocated. On first trigger
+-- after role-set, allocate. On role change (Sub-plan C will wire), free old.
+
+Roles.allocated = {}  -- key: cell_id, value: current role string
+
+-- Ensure cell's SC instance is allocated for its current role. Idempotent.
+function Roles.ensure_allocated(x, y)
+    if y ~= 2 then return end  -- only row 2 cells use lazy allocation
+    local cell_id = Roles.cell_id(x, y)
+    local role = Roles.cell_role[x]
+    if Roles.allocated[cell_id] == role then return end
+    -- If previously allocated as a different role, free it first
+    if Roles.allocated[cell_id] then
+        local prev = Roles.allocated[cell_id]
+        if prev == 'TriSin' then
+            engine.trisin_free(cell_id)
+        elseif prev == 'Ringer' then
+            engine.ringer_free(cell_id)
+        end
+        Roles.allocated[cell_id] = nil
+    end
+    -- Allocate fresh for the current role (only audio voices need allocation)
+    if role == 'TriSin' then
+        engine.trisin_alloc(cell_id)
+        Roles.allocated[cell_id] = role
+    elseif role == 'Ringer' then
+        engine.ringer_alloc(cell_id)
+        Roles.allocated[cell_id] = role
+    end
+    -- Crow roles and looper don't need SC instances — they speak crow/ii directly
+end
+
+-- Called by schicksalslied.lua's cleanup() — free all allocated SC instances.
+function Roles.free_all()
+    for cell_id, role in pairs(Roles.allocated) do
+        if role == 'TriSin' then
+            engine.trisin_free(cell_id)
+        elseif role == 'Ringer' then
+            engine.ringer_free(cell_id)
+        end
+    end
+    Roles.allocated = {}
+end
+
+-- ========================================================================
 -- ROLE DISPATCH TABLE
 -- ========================================================================
 -- Each role dispatch reads bytes from the cell's sequins (via Sequencer),
@@ -84,6 +131,7 @@ Roles.looper_running = {}
 Roles.dispatch_row_2 = {
 
     ['TriSin'] = function(x, y, seq)
+        Roles.ensure_allocated(x, y)
         local cell_id = Roles.cell_id(x, y)
         local note = seq() % 32 + 49
         local freq = MusicUtil.note_num_to_freq(note)
@@ -92,6 +140,7 @@ Roles.dispatch_row_2 = {
     end,
 
     ['Ringer'] = function(x, y, seq)
+        Roles.ensure_allocated(x, y)
         local cell_id = Roles.cell_id(x, y)
         local note = seq() % 32 + 49
         local freq = MusicUtil.note_num_to_freq(note)
