@@ -90,6 +90,24 @@ Routine({
 ~triSinPoly.free;
 1.0.wait;
 
+"Test 8: Ringer basic trigger (pinged resonant filter at 440Hz)...".postln;
+~ringerTest = Ringer.new;
+~ringerTest.setParam('all', \bus, kernel.dryBus.index);
+~ringerTest.setParam('all', \amp, 0.5);
+~ringerTest.setParam('all', \index, 4);
+~ringerTest.trigger(\1, 440);
+"  Expected: pinged Ringz tone with ~8s decay (index=4, release=index*2).".postln;
+2.0.wait;
+
+"Test 9: Ringer real-time amp fade — note still sounding, fade amp to 0...".postln;
+~ringerTest.trigger(\2, 220);
+0.3.wait;
+"  Mid-note, setting amp=0 (should hear smooth fade-out)...".postln;
+~ringerTest.setParam('all', \amp, 0);
+1.5.wait;
+~ringerTest.free;
+1.0.wait;
+
     kernel.free;
     "All tests passed.".postln;
     Server.default.quit;
