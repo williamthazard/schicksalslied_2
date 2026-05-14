@@ -60,6 +60,7 @@ function Sequencer.init()
             Sequencer.Fire_Decay[x][y] = 0
         end
     end
+    init_seq_modes()
 end
 
 -- ========================================================================
@@ -171,6 +172,93 @@ function Sequencer.toggle_pause()
             end)
         end
     end
+end
+
+-- ========================================================================
+-- SEQ MODE — clock rate per cell per tick
+-- ========================================================================
+-- Four modes per spec §7:
+--   sequins  : rate = Seq[x][y]() / Seq[x][y]() * scale (consumes 2 bytes)
+--   fixed    : rate = fixed_value (a constant)
+--   user_seq : rate cycles through a user-configured pattern of N step durations
+--   random   : rate = math.random(min, max) per tick
+--
+-- Sub-plan C will add the full per-cell params menu wiring. For Sub-plan B,
+-- we use sensible defaults that match spec §7's naherinlied-derived defaults.
+
+-- Default seq_mode per cell. Keyed by [x][y] for toggle rows.
+-- Format: { mode = 'sequins'|'fixed'|'user_seq'|'random', args... }
+Sequencer.Seq_Mode = {}
+
+-- Preset user-sequence patterns. Replicates spec §7's mention of naherinlied's
+-- seqs[1..4]. cell_roles or schicksalslied.lua can swap these via params later.
+Sequencer.User_Seq_Patterns = {
+    Sequins({ 0.25, 0.25, 15.5 }),
+    Sequins({ 0.5, 15, 0.5 }),
+    Sequins({ 0.25, 15.25, 0.25, 0.25 }),
+    Sequins({ 0.5, 0.5, 14.5, 0.5 }),
+}
+
+-- Default seq_mode per cell, matching naherinlied's column behavior.
+local function default_seq_mode_for(x, y)
+    if y == 2 then
+        -- Row 2 (row-2 voice/crow cells): col-specific defaults per naherinlied
+        if x == 1 or x == 2 then return { mode = 'fixed', fixed_value = 8 }
+        elseif x >= 3 and x <= 8 then return { mode = 'sequins', scale = 8 }
+        elseif x == 9 then return { mode = 'user_seq', pattern_index = 1 }
+        elseif x == 10 then return { mode = 'user_seq', pattern_index = 2 }
+        elseif x == 11 then return { mode = 'user_seq', pattern_index = 3 }
+        elseif x == 12 then return { mode = 'user_seq', pattern_index = 4 }
+        elseif x == 13 then return { mode = 'fixed', fixed_value = 3 }
+        elseif x == 14 then return { mode = 'fixed', fixed_value = 1.5 }
+        elseif x == 15 then return { mode = 'fixed', fixed_value = 1 }
+        elseif x == 16 then return { mode = 'fixed', fixed_value = 0.5 }
+        end
+    elseif y == 4 or y == 6 then
+        -- Sampler rows: fixed 2 across all cols
+        return { mode = 'fixed', fixed_value = 2 }
+    elseif y == 8 then
+        -- One-shot row: random(1, 16)
+        return { mode = 'random', random_min = 1, random_max = 16 }
+    end
+    return { mode = 'fixed', fixed_value = 1 }
+end
+
+-- Populate defaults — call from Sequencer.init()
+local function init_seq_modes()
+    for x = 1, 16 do
+        Sequencer.Seq_Mode[x] = {}
+        for y = 2, 8, 2 do
+            Sequencer.Seq_Mode[x][y] = default_seq_mode_for(x, y)
+        end
+    end
+end
+
+-- Compute the rate for cell [x][y]'s next tick based on its current seq_mode.
+function Sequencer.get_rate(x, y)
+    local sm = Sequencer.Seq_Mode[x] and Sequencer.Seq_Mode[x][y]
+    if sm == nil then return 1 end  -- safe default if cell has no mode
+
+    if sm.mode == 'fixed' then
+        return sm.fixed_value or 1
+    elseif sm.mode == 'sequins' then
+        local seq = Sequencer.Seq[x][y]
+        local num = seq()
+        local den = seq()
+        local scale = sm.scale or 1
+        if den == 0 then return scale end  -- guard against div-by-0
+        return (num / den) * scale
+    elseif sm.mode == 'user_seq' then
+        local pattern_index = sm.pattern_index or 1
+        local pattern = Sequencer.User_Seq_Patterns[pattern_index]
+        if pattern then return pattern() end
+        return 1
+    elseif sm.mode == 'random' then
+        local lo = sm.random_min or 1
+        local hi = sm.random_max or 16
+        return math.random(lo, hi)
+    end
+    return 1
 end
 
 return Sequencer
