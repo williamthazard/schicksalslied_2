@@ -70,8 +70,6 @@ Routine({
 "  Mid-note, setting amp=0 (should hear smooth fade-out, no click)...".postln;
 ~triSinTest.setParam('all', \amp, 0);
 1.5.wait;
-~triSinTest.setParam('all', \amp, 0.5);  // restore for cleanup
-0.5.wait;
 ~triSinTest.free;
 1.0.wait;
 

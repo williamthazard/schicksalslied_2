@@ -21,7 +21,6 @@ TriSin {
                         index,
                         iScale,
                         freq,
-                        phase,
                         cutoff,
                         resonance,
                         cutoff_env,
@@ -95,7 +94,6 @@ TriSin {
             \cRatio, 1,
             \index, 1,
             \iScale, 5,
-            \phase, 0,
             \cutoff, 8000,
             \cutoff_env, 1,
             \resonance, 3,
@@ -129,8 +127,7 @@ TriSin {
         arg voiceKey, freq;
         if (singleVoices[voiceKey].isPlaying, {
             voiceParams[voiceKey][\freq] = freq;
-            singleVoices[voiceKey].set(\freq, freq);
-            singleVoices[voiceKey].set(\t_gate, 1);
+            singleVoices[voiceKey].set(\freq, freq, \t_gate, 1);
         }, {
             voiceParams[voiceKey][\freq] = freq;
             Synth.new("TriSin", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
@@ -172,7 +169,7 @@ TriSin {
     }
 
     freeAllNotes {
-        voiceGroup.set(\stopGate, -1.05);
+        voiceGroup.freeAll;
     }
 
     free {
