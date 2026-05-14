@@ -73,6 +73,21 @@ Routine({
 ~triSinTest.free;
 1.0.wait;
 
+"Test 6b: TriSin amp fade with cutoff_env=0 (isolate cutoff envelope effect)".postln;
+~triSinTestB = TriSin.new;
+~triSinTestB.setParam('all', \bus, kernel.dryBus.index);
+~triSinTestB.setParam('all', \amp, 0.5);
+~triSinTestB.setParam('all', \release, 2.0);
+~triSinTestB.setParam('all', \cutoff_env, 0);  // DISABLE cutoff envelope modulation
+~triSinTestB.trigger(\1, 220);
+0.3.wait;
+"  Mid-note (cutoff_env=0), setting amp=0. If you still hear a pitch drop,".postln;
+"  the cause is NOT the cutoff envelope (likely MoogFF resonance ringing).".postln;
+~triSinTestB.setParam('all', \amp, 0);
+1.5.wait;
+~triSinTestB.free;
+1.0.wait;
+
 "Test 7: TriSin polyphony — fire 4 notes in rapid succession on different voiceKeys".postln;
 ~triSinPoly = TriSin.new;
 ~triSinPoly.setParam('all', \bus, kernel.dryBus.index);
@@ -109,7 +124,7 @@ Routine({
 1.0.wait;
 
 "Test 10: Sampler — load audio/test_long.wav, trigger, hear playback".postln;
-~samplerBuf = Buffer.read(Server.default, "audio/test_long.wav");
+~samplerBuf = Buffer.read(Server.default, thisProcess.nowExecutingPath.dirname +/+ "audio/test_long.wav");
 Server.default.sync;
 ("  Loaded buffer: " ++ ~samplerBuf.numFrames ++ " frames, "
     ++ ~samplerBuf.numChannels ++ " channels").postln;
@@ -125,7 +140,7 @@ Server.default.sync;
 1.0.wait;
 
 "Test 11: Sampler crossfade — rapid retriggers at 16th-note intervals (~250ms)".postln;
-~xfBuf = Buffer.read(Server.default, "audio/test_long.wav");
+~xfBuf = Buffer.read(Server.default, thisProcess.nowExecutingPath.dirname +/+ "audio/test_long.wav");
 Server.default.sync;
 ~xfSampler = Sampler.new(~xfBuf);
 ~xfSampler.setParam('all', \bus, kernel.dryBus.index);
@@ -143,7 +158,7 @@ Server.default.sync;
 1.0.wait;
 
     "Test 12: OneShot — basic trigger, hear a quick noise burst".postln;
-    ~oneShotBuf = Buffer.read(Server.default, "audio/test_oneshot.wav");
+    ~oneShotBuf = Buffer.read(Server.default, thisProcess.nowExecutingPath.dirname +/+ "audio/test_oneshot.wav");
     Server.default.sync;
     ~oneShotTest = OneShot.new(~oneShotBuf);
     ~oneShotTest.setParam('all', \bus, kernel.dryBus.index);
@@ -156,7 +171,7 @@ Server.default.sync;
     1.0.wait;
 
     "Test 13: OneShot long-sample fade-out (spec §14 test #7)".postln;
-    ~fieldBuf = Buffer.read(Server.default, "audio/test_field.wav");
+    ~fieldBuf = Buffer.read(Server.default, thisProcess.nowExecutingPath.dirname +/+ "audio/test_field.wav");
     Server.default.sync;
     ~fieldTest = OneShot.new(~fieldBuf);
     ~fieldTest.setParam('all', \bus, kernel.dryBus.index);
@@ -184,24 +199,31 @@ Server.default.sync;
 "  NOTE: This injects a synthesized tone into micBus instead of using".postln;
 "  a real mic, avoiding audio-device handshake during automated testing.".postln;
 ~granTestSrc = {
-    var sig = SinOsc.ar(440) * EnvGen.kr(Env.perc(0.5, 2.0), doneAction: 2) * 0.3;
+    var env = EnvGen.kr(Env([0, 1, 1, 0], times: [0.5, 14.5, 0.5]), doneAction: 2);
+    var sig = SinOsc.ar(440) * env * 0.3;
     Out.ar(kernel.micBus, sig);
 }.play(kernel.micGrp);
-0.1.wait;
+"  Source tone plays for 15s; first 8s fills the delay buffer".postln;
+"  before grains start reading at the 8s+ delays.".postln;
+9.0.wait;
 kernel.grainSynths.do({ arg syn; syn.set(\amp, 0.2); });
-"  Expected: 440Hz tone enters delay loop, granular wash builds and decays.".postln;
+"  Grains amp=0.2 (expecting wash now that buffer has 9s of content)".postln;
 8.0.wait;
 kernel.grainSynths.do({ arg syn; syn.set(\amp, 0); });
+"  Grains amp=0 (expecting silence)".postln;
 2.0.wait;
 
 "Test 16: granular control commands (via kernel public methods)".postln;
 ~granTestSrc2 = {
-    var sig = SinOsc.ar(330) * EnvGen.kr(Env.perc(0.5, 2.0), doneAction: 2) * 0.3;
+    var env = EnvGen.kr(Env([0, 1, 1, 0], times: [0.5, 11.5, 0.5]), doneAction: 2);
+    var sig = SinOsc.ar(330) * env * 0.3;
     Out.ar(kernel.micBus, sig);
 }.play(kernel.micGrp);
-0.1.wait;
+"  Source tone plays for 12s (buffer already has 15s of 440Hz from Test 15)".postln;
+"  By this point, mid-range grain delays should have abundant content.".postln;
+3.0.wait;
 kernel.setGranularOutAmp(0.2);
-"  granular_out_amp = 0.2 (expecting wash to build)".postln;
+"  granular_out_amp = 0.2 (via setGranularOutAmp public method)".postln;
 6.0.wait;
 kernel.setGranularOutAmp(0);
 "  granular_out_amp = 0 (expecting silence)".postln;
