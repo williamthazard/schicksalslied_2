@@ -32,6 +32,20 @@ Needs_Restart    = false -- legacy from 1.x's FormantTriPTR install; always fals
 -- GRID + SCREEN
 -- ========================================================================
 G                = grid.connect()
+
+-- Hotplug handlers — fire when a grid is connected/disconnected at runtime.
+-- Without grid.add, if the user plugs in a grid AFTER script init, the LEDs
+-- stay dark until the first grid press (which sets Grid_Dirty via G.key).
+grid.add = function(dev)
+    G = grid.connect()
+    Grid_Dirty = true
+    print('grid connected: ' .. (dev.name or 'unknown'))
+end
+
+grid.remove = function(dev)
+    print('grid disconnected: ' .. (dev.name or 'unknown'))
+end
+
 Grid_Dirty       = true
 
 -- K1/K2/K3 state for tap-tempo
