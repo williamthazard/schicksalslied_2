@@ -3,6 +3,7 @@
 
 local MusicUtil = require 'musicutil'
 local Looper = include 'lib/wtape_looper'
+local Midi = include 'lib/midi_role'
 local Roles = {}
 
 -- ========================================================================
@@ -29,7 +30,8 @@ end
 -- ========================================================================
 -- ROLE ENUM (row 2 cells configurable; rows 4/6/8 are fixed)
 -- ========================================================================
--- 10 options per spec §3. Order matters — params menu uses these as indices.
+-- 11 options per spec §3 (10 original + MIDI added in Sub-plan C).
+-- Order matters — params menu uses these as indices.
 Roles.ENUM = {
     'TriSin',
     'Ringer',
@@ -41,6 +43,7 @@ Roles.ENUM = {
     'w/syn',
     'w/del',
     'w/tape looper',
+    'MIDI',
 }
 
 -- Default row-2 role per column (spec §3: 4 TriSin → 4 Ringer → 4 TriSin → 4 Ringer)
@@ -226,6 +229,10 @@ Roles.dispatch_row_2 = {
             Looper.run(seq)
             Roles.looper_running[cell_id] = false
         end)
+    end,
+
+    ['MIDI'] = function(x, y, seq)
+        Midi.dispatch(x, y, seq)
     end,
 }
 
