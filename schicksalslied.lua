@@ -455,6 +455,85 @@ local function add_params()
         default = 1,
     }
 
+    -- ────────────────────────────────────────────────────────────────────
+    -- CROW GROUP (spec §8)
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('crow', 10)
+
+    params:add{
+        type = 'trigger',
+        id = 'reinit_crow',
+        name = 're-init crow modules',
+        action = crow_reinit,
+    }
+    params:add{
+        type = 'number',
+        id = 'wsyn_voices',
+        name = 'w/syn voices',
+        min = 1, max = 4, default = 4,
+        action = function(v) crow.ii.wsyn.voices(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'wsyn_lpg_speed',
+        name = 'w/syn lpg speed',
+        controlspec = controlspec.new(-5, 5, 'lin', 0.01, 0, ''),
+        action = function(v) crow.ii.wsyn.lpg_time(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'wsyn_lpg_symmetry',
+        name = 'w/syn lpg symmetry',
+        controlspec = controlspec.new(-5, 5, 'lin', 0.01, 0, ''),
+        action = function(v) crow.ii.wsyn.lpg_symmetry(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'wsyn_fm_index',
+        name = 'w/syn fm index',
+        controlspec = controlspec.new(0, 5, 'lin', 0.01, 0, ''),
+        action = function(v) crow.ii.wsyn.fm_index(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'wsyn_fm_envelope',
+        name = 'w/syn fm envelope',
+        controlspec = controlspec.new(-5, 5, 'lin', 0.01, 0, ''),
+        action = function(v) crow.ii.wsyn.fm_env(v) end,
+    }
+    params:add{
+        type = 'number',
+        id = 'wsyn_fm_num',
+        name = 'w/syn fm num',
+        min = 1, max = 16, default = 2,
+        action = function(v)
+            crow.ii.wsyn.fm_ratio(v, params:get('wsyn_fm_deno'))
+        end,
+    }
+    params:add{
+        type = 'number',
+        id = 'wsyn_fm_deno',
+        name = 'w/syn fm deno',
+        min = 1, max = 16, default = 1,
+        action = function(v)
+            crow.ii.wsyn.fm_ratio(params:get('wsyn_fm_num'), v)
+        end,
+    }
+    params:add{
+        type = 'control',
+        id = 'wdel_feedback',
+        name = 'w/del feedback',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0, ''),
+        action = function(v) crow.ii.wdel.feedback(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'wdel_filter_cutoff',
+        name = 'w/del filter cutoff',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 1, ''),
+        action = function(v) crow.ii.wdel.filter(v) end,
+    }
+
     -- Sampler file params (16 slots) — Sub-plan A's Lied loads via engine.sampler_load
     -- (NOTE: this block stays here for now; Task 5.2 will move them into a
     -- proper 'samplers' group with the full per-sampler param block.)
@@ -511,22 +590,6 @@ local function add_params()
         controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
     }
 
-    -- The existing standalone reinit_crow + wsyn_voices params are deferred
-    -- to Task 3.1 (where they move into the crow group). For now, retain
-    -- them inline so existing functionality keeps working between tasks.
-    params:add{
-        type = 'trigger',
-        id = 'reinit_crow',
-        name = 're-init crow modules',
-        action = crow_reinit,
-    }
-    params:add{
-        type = 'control',
-        id = 'wsyn_voices',
-        name = 'w/syn voices',
-        controlspec = controlspec.new(1, 4, 'lin', 1, 4, ''),
-        action = function(v) crow.ii.wsyn.voices(v) end,
-    }
 end
 
 -- ========================================================================
