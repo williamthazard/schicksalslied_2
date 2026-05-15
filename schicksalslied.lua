@@ -606,7 +606,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- ROW-2 CELLS GROUP (16 cells × 26 params + 1 separator/cell + 4 bulk = 436)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'row-2 cells', 16 * 27 + 4)
+    params:add_group('row_2_cells', 'synths', 16 * 27 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
@@ -616,7 +616,7 @@ local function add_params()
         params:add{
             type = 'trigger',
             id = 'row_2_set_all_trisin',
-            name = 'row 2: all TriSin',
+            name = 'synths: all TriSin',
             action = function()
                 for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 1) end
             end,
@@ -624,7 +624,7 @@ local function add_params()
         params:add{
             type = 'trigger',
             id = 'row_2_set_all_ringer',
-            name = 'row 2: all Ringer',
+            name = 'synths: all Ringer',
             action = function()
                 for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 2) end
             end,
@@ -632,7 +632,7 @@ local function add_params()
         params:add{
             type = 'trigger',
             id = 'row_2_set_default_mix',
-            name = 'row 2: default mix',
+            name = 'synths: default mix',
             action = function()
                 for x = 1, 16 do
                     params:set('cell_' .. x .. '_2_role',
@@ -643,7 +643,7 @@ local function add_params()
         params:add{
             type = 'trigger',
             id = 'row_2_randomize_roles',
-            name = 'row 2: randomize roles',
+            name = 'synths: randomize roles',
             action = function()
                 for x = 1, 16 do
                     params:set('cell_' .. x .. '_2_role', math.random(1, 11))
@@ -712,7 +712,7 @@ local function add_params()
         params:add{
             type = 'trigger',
             id = 'randomize_all_sampler_positions',
-            name = 'randomize all sampler positions',
+            name = 'randomize all looping sampler positions',
             action = function()
                 for y = 4, 6, 2 do
                     for x = 1, 15, 2 do
@@ -725,7 +725,7 @@ local function add_params()
         params:add{
             type = 'trigger',
             id = 'randomize_all_sampler_durations',
-            name = 'randomize all sampler durations',
+            name = 'randomize all looping sampler durations',
             action = function()
                 for y = 4, 6, 2 do
                     for x = 1, 15, 2 do
@@ -738,7 +738,7 @@ local function add_params()
         params:add{
             type = 'trigger',
             id = 'randomize_all_sampler_rates',
-            name = 'randomize all sampler rates',
+            name = 'randomize all looping sampler rates',
             action = function()
                 for y = 4, 6, 2 do
                     for x = 2, 16, 2 do
@@ -783,7 +783,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- SAMPLERS GROUP (16 slots × 10 params + 1 separator/slot + 1 randomize-all = 177)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('samplers', 'samplers', 16 * 11 + 1)
+    params:add_group('samplers', 'looping samplers', 16 * 11 + 1)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 16 do
@@ -807,7 +807,7 @@ local function add_params()
         params:add{
             type = 'trigger',
             id = 'samplers_randomize_all',
-            name = 'randomize all samplers',
+            name = 'randomize all looping samplers',
             action = function()
                 for slot = 1, 16 do
                     VoiceParams.randomize_sampler(slot)

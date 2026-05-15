@@ -54,7 +54,7 @@ end
 -- Group capacity: 160 × 16 = 2560.
 -- ────────────────────────────────────────────────────────────────────────
 function LiedLfos.add_row_2_lfos_group()
-    params:add_group('row_2_voice_lfos', 'row 2 voice LFOs', 160 * 16)
+    params:add_group('row_2_voice_lfos', 'synth LFOs', 160 * 16)
     for x = 1, 16 do
         local prefix = 'cell_' .. x .. '_2_'
         local label_prefix = 'cell ' .. x .. ' '
@@ -75,7 +75,7 @@ end
 -- SAMPLER LFOS — 4 LFOs × 16 samplers = 64 LFOs. Capacity: 64 × 16 = 1024.
 -- ────────────────────────────────────────────────────────────────────────
 function LiedLfos.add_sampler_lfos_group()
-    params:add_group('sampler_lfos', 'sampler LFOs', 64 * 16)
+    params:add_group('sampler_lfos', 'looping sampler LFOs', 64 * 16)
     for slot = 1, 16 do
         local prefix = 'sampler_' .. slot .. '_'
         local label_prefix = 'sampler ' .. slot .. ' '
