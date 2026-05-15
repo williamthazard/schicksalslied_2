@@ -6,6 +6,27 @@ local Looper = include 'lib/wtape_looper'
 local Roles = {}
 
 -- ========================================================================
+-- PITCH QUANTIZATION (global scale + root)
+-- ========================================================================
+-- Returns the input midi_note unchanged when scale_mode == 1 (chromatic /
+-- no quantization — schicksalslied's historical behavior). Otherwise snaps
+-- to the chosen scale's nearest note.
+-- Called by every pitched role dispatcher (TriSin, Ringer, crow 1+2,
+-- crow 3+4, JF, JF run, JF quantize, w/syn, w/del — MIDI dispatcher in
+-- lib/midi_role.lua is wired in Task 3.2).
+function Roles.quantize_note(midi_note)
+    local scale_idx = params:get('scale_mode')
+    if scale_idx == nil or scale_idx == 1 then
+        return midi_note  -- chromatic / pre-params-init = no quantization
+    end
+    local root = (params:get('root_note') or 1) - 1  -- 0-based 0..11
+    -- scale_mode index 2 = MusicUtil.SCALES[1], so offset by 1
+    local scale = MusicUtil.generate_scale_of_length(root,
+        MusicUtil.SCALES[scale_idx - 1].name, 128)
+    return MusicUtil.snap_note_to_array(midi_note, scale)
+end
+
+-- ========================================================================
 -- ROLE ENUM (row 2 cells configurable; rows 4/6/8 are fixed)
 -- ========================================================================
 -- 10 options per spec §3. Order matters — params menu uses these as indices.
@@ -134,7 +155,7 @@ Roles.dispatch_row_2 = {
     ['TriSin'] = function(x, y, seq)
         Roles.ensure_allocated(x, y)
         local cell_id = Roles.cell_id(x, y)
-        local note = seq() % 32 + 49
+        local note = Roles.quantize_note(seq() % 32 + 49)
         local freq = MusicUtil.note_num_to_freq(note)
         local voice_key = next_voice_key(cell_id, 4)
         engine.trisin_trigger(cell_id, voice_key, freq)
@@ -143,7 +164,7 @@ Roles.dispatch_row_2 = {
     ['Ringer'] = function(x, y, seq)
         Roles.ensure_allocated(x, y)
         local cell_id = Roles.cell_id(x, y)
-        local note = seq() % 32 + 49
+        local note = Roles.quantize_note(seq() % 32 + 49)
         local freq = MusicUtil.note_num_to_freq(note)
         local voice_key = next_voice_key(cell_id, 4)
         engine.ringer_trigger(cell_id, voice_key, freq)
@@ -151,7 +172,8 @@ Roles.dispatch_row_2 = {
 
     ['crow 1+2'] = function(x, y, seq)
         -- consumes 4 bytes: pitch (v/oct), slew, attack, release
-        crow.output[1].volts = (seq() % 32 + 1) / 12
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.output[1].volts = pitch_note / 12
         crow.output[1].slew = (seq() % 32 + 1) / 300
         crow.output[2].dyn.attack = (seq() % 32 + 1) / 40
         crow.output[2].dyn.release = (seq() % 32 + 1) / 40
@@ -159,7 +181,8 @@ Roles.dispatch_row_2 = {
     end,
 
     ['crow 3+4'] = function(x, y, seq)
-        crow.output[3].volts = (seq() % 32 + 1) / 12
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.output[3].volts = pitch_note / 12
         crow.output[3].slew = (seq() % 32 + 1) / 300
         crow.output[4].dyn.attack = (seq() % 32 + 1) / 40
         crow.output[4].dyn.release = (seq() % 32 + 1) / 40
@@ -167,30 +190,31 @@ Roles.dispatch_row_2 = {
     end,
 
     ['JF'] = function(x, y, seq)
-        -- consumes 2 bytes: pitch (v/oct), level (1-6 via %5+1)
-        local pitch = (seq() % 32 + 1) / 12
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
         local level = seq() % 5 + 1
-        crow.ii.jf.play_note(pitch, level)  -- JF handles voice allocation
+        crow.ii.jf.play_note(pitch_note / 12, level)
     end,
 
     ['JF run'] = function(x, y, seq)
-        crow.ii.jf.run((seq() % 32 + 1) / 12)
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.ii.jf.run(pitch_note / 12)
     end,
 
     ['JF quantize'] = function(x, y, seq)
-        crow.ii.jf.quantize((seq() % 32 + 1) / 12)
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.ii.jf.quantize(pitch_note / 12)
     end,
 
     ['w/syn'] = function(x, y, seq)
-        local pitch = (seq() % 32 + 1) / 12
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
         local level = seq() % 5 + 1
-        crow.ii.wsyn.play_note(pitch, level)
+        crow.ii.wsyn.play_note(pitch_note / 12, level)
     end,
 
     ['w/del'] = function(x, y, seq)
-        -- pluck event: time, freq, pluck level
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
         crow.ii.wdel.time(0)
-        crow.ii.wdel.freq((seq() % 32 + 1) / 12)
+        crow.ii.wdel.freq(pitch_note / 12)
         crow.ii.wdel.pluck(seq() % 5 + 1)
     end,
 
