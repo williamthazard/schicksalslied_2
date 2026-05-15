@@ -627,7 +627,7 @@ local function add_params()
     -- ROW-2 CELLS GROUP (16 cells × 41 params + 1 separator/cell + 4 bulk = 660)
     -- Each cell: 1 separator + 1 role + 14 seq_mode + 6 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 41
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'synths', 16 * 41 + 4)
+    params:add_group('row_2_cells', 'synths', 16 * 42 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do

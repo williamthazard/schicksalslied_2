@@ -158,7 +158,8 @@ Roles.dispatch_row_2 = {
     ['TriSin'] = function(x, y, seq)
         Roles.ensure_allocated(x, y)
         local cell_id = Roles.cell_id(x, y)
-        local note = Roles.quantize_note(seq() % 32 + 49)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local note = Roles.quantize_note(seq() % 32 + 49 + offset)
         local freq = MusicUtil.note_num_to_freq(note)
         local voice_key = next_voice_key(cell_id, 4)
         engine.trisin_trigger(cell_id, voice_key, freq)
@@ -167,7 +168,8 @@ Roles.dispatch_row_2 = {
     ['Ringer'] = function(x, y, seq)
         Roles.ensure_allocated(x, y)
         local cell_id = Roles.cell_id(x, y)
-        local note = Roles.quantize_note(seq() % 32 + 49)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local note = Roles.quantize_note(seq() % 32 + 49 + offset)
         local freq = MusicUtil.note_num_to_freq(note)
         local voice_key = next_voice_key(cell_id, 4)
         engine.ringer_trigger(cell_id, voice_key, freq)
@@ -175,7 +177,8 @@ Roles.dispatch_row_2 = {
 
     ['crow 1+2'] = function(x, y, seq)
         -- consumes 4 bytes: pitch (v/oct), slew, attack, release
-        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1 + offset)
         crow.output[1].volts = pitch_note / 12
         crow.output[1].slew = (seq() % 32 + 1) / 300
         crow.output[2].dyn.attack = (seq() % 32 + 1) / 40
@@ -184,7 +187,8 @@ Roles.dispatch_row_2 = {
     end,
 
     ['crow 3+4'] = function(x, y, seq)
-        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1 + offset)
         crow.output[3].volts = pitch_note / 12
         crow.output[3].slew = (seq() % 32 + 1) / 300
         crow.output[4].dyn.attack = (seq() % 32 + 1) / 40
@@ -193,29 +197,34 @@ Roles.dispatch_row_2 = {
     end,
 
     ['JF'] = function(x, y, seq)
-        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1 + offset)
         local level = seq() % 5 + 1
         crow.ii.jf.play_note(pitch_note / 12, level)
     end,
 
     ['JF run'] = function(x, y, seq)
-        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1 + offset)
         crow.ii.jf.run(pitch_note / 12)
     end,
 
     ['JF quantize'] = function(x, y, seq)
-        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1 + offset)
         crow.ii.jf.quantize(pitch_note / 12)
     end,
 
     ['w/syn'] = function(x, y, seq)
-        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1 + offset)
         local level = seq() % 5 + 1
         crow.ii.wsyn.play_note(pitch_note / 12, level)
     end,
 
     ['w/del'] = function(x, y, seq)
-        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1 + offset)
         crow.ii.wdel.time(0)
         crow.ii.wdel.freq(pitch_note / 12)
         crow.ii.wdel.pluck(seq() % 5 + 1)

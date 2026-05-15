@@ -307,6 +307,24 @@ function VoiceParams.add_row2_cell_block(x)
         end,
     }
 
+    -- ── Pitch offset (semitones, applied before scale quantization) ──
+    params:add{
+        type = 'number',
+        id = 'cell_' .. x .. '_2_pitch_offset',
+        name = 'cell ' .. x .. ' pitch offset',
+        min = -36, max = 36, default = 0,
+        formatter = function(param)
+            local v = param:get()
+            local suffix = ''
+            if v == 0 then suffix = ' (unison)'
+            elseif v % 12 == 0 then suffix = string.format(' (%+d oct)', v / 12)
+            elseif math.abs(v) == 7 then suffix = v > 0 and ' (+P5)' or ' (-P5)'
+            elseif math.abs(v) == 5 then suffix = v > 0 and ' (+P4)' or ' (-P4)'
+            end
+            return string.format('%+d st%s', v, suffix)
+        end,
+    }
+
     -- ── TriSin-only params (16) ──
     params:add{
         type = 'control',
@@ -520,6 +538,14 @@ function VoiceParams._update_row2_visibility(x, role)
     show_or_hide(trisin_only, role == 'TriSin')
     show_or_hide(ringer_only, role == 'Ringer')
     show_or_hide(midi_only, role == 'MIDI')
+
+    -- pitch_offset applies to all pitched roles; hide only for w/tape looper
+    local pitch_offset_visible = (role ~= 'w/tape looper')
+    if pitch_offset_visible then
+        params:show(prefix .. 'pitch_offset')
+    else
+        params:hide(prefix .. 'pitch_offset')
+    end
 
     _menu.rebuild_params()
 end

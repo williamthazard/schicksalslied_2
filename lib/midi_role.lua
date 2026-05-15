@@ -51,7 +51,8 @@ function Midi.dispatch(x, y, seq)
     local Roles = include 'lib/cell_roles'
     local cell_id = string.format("%d_%d", x, y)
     local channel = params:get('cell_' .. x .. '_2_midi_channel') or 1
-    local note = Roles.quantize_note(seq() % 32 + 49)  -- MIDI 49..80, scale-snapped
+    local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+    local note = Roles.quantize_note(seq() % 32 + 49 + offset)  -- MIDI 49..80, scale-snapped
     local vel = math.min(127, seq() % 32 + 49)  -- velocity range 49..80
     -- Note-off any previously-active note from this cell. Use the PREVIOUS
     -- channel (which may differ from current if channel changed mid-sequence)
