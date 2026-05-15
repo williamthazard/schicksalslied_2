@@ -740,6 +740,14 @@ function init()
 
     Midi_Role.init()
 
+    -- After params:bang, force-fire each cell role action so initial visibility
+    -- is correct (params:bang fires actions but params:hide may not propagate
+    -- to the menu redraw on first boot — explicitly re-setting each role does).
+    for x = 1, 16 do
+        local role_idx = params:get('cell_' .. x .. '_2_role')
+        params:set('cell_' .. x .. '_2_role', role_idx)
+    end
+
     Sequencer.start_all_clocks()
 
     -- Screen redraw timer at 15fps
