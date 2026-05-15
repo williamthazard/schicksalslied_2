@@ -652,6 +652,125 @@ local function add_params()
     end
 
     -- ────────────────────────────────────────────────────────────────────
+    -- CELL SEQ MODES GROUP (64 cells × 14 params + 1 reset trigger = 897)
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('cell_seq_modes', 64 * 14 + 1)
+    do
+        local VoiceParams = require 'lib/voice_params'
+        for y = 2, 8, 2 do
+            for x = 1, 16 do
+                VoiceParams.add_cell_seq_mode_block(x, y)
+            end
+        end
+        params:add{
+            type = 'trigger',
+            id = 'reset_all_seq_modes_to_default',
+            name = 'reset all seq modes',
+            action = function() Sequencer.reset_all_seq_modes_to_default() end,
+        }
+    end
+
+    -- ────────────────────────────────────────────────────────────────────
+    -- CELL VALUE MODES GROUP (sampler/oneshot cells only)
+    --   - Row 4/6 odd cols (sampler trigger, 16 cells): 2 kinds × 13 = 26/cell
+    --   - Row 4/6 even cols (sampler rate, 16 cells): 13/cell
+    --   - Row 8 cols 1-13 (one-shot, 13 cells): 13/cell
+    -- Total: 16×26 + 16×13 + 13×13 = 416 + 208 + 169 = 793 + 5 bulk = 798
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('cell_value_modes', 793 + 5)
+    do
+        local VoiceParams = require 'lib/voice_params'
+        -- Sampler trigger cells (rows 4/6, odd cols 1,3,5,7,9,11,13,15)
+        for y = 4, 6, 2 do
+            for x = 1, 15, 2 do
+                VoiceParams.add_cell_value_mode_block(x, y, 'position', 0, 0.9)
+                VoiceParams.add_cell_value_mode_block(x, y, 'duration', 0.001, 0.1)
+            end
+        end
+        -- Sampler rate cells (rows 4/6, even cols 2,4,6,8,10,12,14,16)
+        for y = 4, 6, 2 do
+            for x = 2, 16, 2 do
+                VoiceParams.add_cell_value_mode_block(x, y, 'rate', -16, 16)
+            end
+        end
+        -- One-shot cells (row 8, cols 1-13)
+        for x = 1, 13 do
+            VoiceParams.add_cell_value_mode_block(x, 8, 'rate', -16, 16)
+        end
+
+        -- 5 bulk-randomize triggers
+        params:add{
+            type = 'trigger',
+            id = 'randomize_all_sampler_positions',
+            name = 'randomize all sampler positions',
+            action = function()
+                for y = 4, 6, 2 do
+                    for x = 1, 15, 2 do
+                        params:set(string.format('cell_%d_%d_position_fixed_value', x, y),
+                            math.random())
+                    end
+                end
+            end,
+        }
+        params:add{
+            type = 'trigger',
+            id = 'randomize_all_sampler_durations',
+            name = 'randomize all sampler durations',
+            action = function()
+                for y = 4, 6, 2 do
+                    for x = 1, 15, 2 do
+                        params:set(string.format('cell_%d_%d_duration_fixed_value', x, y),
+                            0.001 + math.random() * 0.099)
+                    end
+                end
+            end,
+        }
+        params:add{
+            type = 'trigger',
+            id = 'randomize_all_sampler_rates',
+            name = 'randomize all sampler rates',
+            action = function()
+                for y = 4, 6, 2 do
+                    for x = 2, 16, 2 do
+                        params:set(string.format('cell_%d_%d_rate_fixed_value', x, y),
+                            -16 + math.random() * 32)
+                    end
+                end
+            end,
+        }
+        params:add{
+            type = 'trigger',
+            id = 'randomize_all_oneshot_rates',
+            name = 'randomize all one-shot rates',
+            action = function()
+                for x = 1, 13 do
+                    params:set(string.format('cell_%d_8_rate_fixed_value', x),
+                        -16 + math.random() * 32)
+                end
+            end,
+        }
+        params:add{
+            type = 'trigger',
+            id = 'reset_all_value_modes_to_lied',
+            name = 'reset all value modes to lied',
+            action = function()
+                for y = 4, 6, 2 do
+                    for x = 1, 15, 2 do
+                        params:set(string.format('cell_%d_%d_position_mode', x, y), 1)
+                        params:set(string.format('cell_%d_%d_duration_mode', x, y), 1)
+                    end
+                    for x = 2, 16, 2 do
+                        params:set(string.format('cell_%d_%d_rate_mode', x, y), 1)
+                    end
+                end
+                for x = 1, 13 do
+                    params:set(string.format('cell_%d_8_rate_mode', x), 1)
+                end
+            end,
+        }
+    end
+
+    -- ────────────────────────────────────────────────────────────────────
     -- SAMPLERS GROUP (16 slots × 10 params + 1 randomize-all = 161)
     -- ────────────────────────────────────────────────────────────────────
     params:add_group('samplers', 16 * 10 + 1)
@@ -746,6 +865,31 @@ function init()
     for x = 1, 16 do
         local role_idx = params:get('cell_' .. x .. '_2_role')
         params:set('cell_' .. x .. '_2_role', role_idx)
+    end
+
+    -- Refresh seq_mode visibility for all toggle cells
+    for y = 2, 8, 2 do
+        for x = 1, 16 do
+            local mode_idx = params:get('cell_' .. x .. '_' .. y .. '_seq_mode')
+            params:set('cell_' .. x .. '_' .. y .. '_seq_mode', mode_idx)
+        end
+    end
+    -- Refresh value_mode visibility (sampler trigger cells)
+    for y = 4, 6, 2 do
+        for x = 1, 15, 2 do
+            for _, kind in ipairs({ 'position', 'duration' }) do
+                local pid = 'cell_' .. x .. '_' .. y .. '_' .. kind .. '_mode'
+                params:set(pid, params:get(pid))
+            end
+        end
+        for x = 2, 16, 2 do
+            local pid = 'cell_' .. x .. '_' .. y .. '_rate_mode'
+            params:set(pid, params:get(pid))
+        end
+    end
+    for x = 1, 13 do
+        local pid = 'cell_' .. x .. '_8_rate_mode'
+        params:set(pid, params:get(pid))
     end
 
     Sequencer.start_all_clocks()
