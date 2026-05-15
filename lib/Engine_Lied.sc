@@ -102,6 +102,13 @@ Engine_Lied : CroneEngine {
             kernel.setOneShotParam(msg[1].asInteger, msg[2].asSymbol, msg[3]);
         });
 
+        this.addCommand(\silence_all_samplers, "", { arg msg;
+            kernel.silenceAllSamplers;
+        });
+        this.addCommand(\silence_all_oneshots, "", { arg msg;
+            kernel.silenceAllOneShots;
+        });
+
         "Engine_Lied alloc complete.".postln;
     }
 

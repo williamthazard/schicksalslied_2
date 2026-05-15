@@ -343,7 +343,7 @@ function redraw()
     -- History items above (up to 4-5 lines, scrolling up)
     for i = 1, 5 do
         if not (History_Index - i >= 0) then break end
-        screen.move(5, 32 - 10 * (i - 1))
+        screen.move(5, 55 - 10 * i)
         screen.text(History[History_Index - i + 1] or "")
     end
 
@@ -396,6 +396,9 @@ local function panic()
     engine.set_mic_dry_amp(0)
     engine.set_granular_out_amp(0)
     engine.set_fb_amp(0)
+    -- Hard-stop in-flight sampler and one-shot playback
+    engine.silence_all_samplers()
+    engine.silence_all_oneshots()
     -- Stop crow / JF
     crow.ii.jf.run(0)
     -- Mark grid dirty so the LEDs reflect the now-cleared toggle state

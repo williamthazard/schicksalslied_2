@@ -464,6 +464,23 @@ Lied {
         }
     }
 
+    // -----------------------------------------------------------------
+    // Panic helpers — hard-stop all in-flight notes per family without
+    // freeing the instances (so future triggers still work).
+    // -----------------------------------------------------------------
+
+    silenceAllSamplers {
+        samplerInstances.do({ |inst|
+            if (inst.notNil) { inst.voiceGroup.freeAll };
+        });
+    }
+
+    silenceAllOneShots {
+        oneShotInstances.do({ |inst|
+            if (inst.notNil) { inst.voiceGroup.freeAll };
+        });
+    }
+
     free {
         triSinInstances.do { |inst| inst.free };
         ringerInstances.do { |inst| inst.free };
