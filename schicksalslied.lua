@@ -17,6 +17,7 @@ engine.name = 'Lied'
 local Sequencer  = include 'lib/sequencer'
 local Roles      = include 'lib/cell_roles'
 local MusicUtil  = require 'musicutil'
+Midi_Role        = include 'lib/midi_role'
 
 -- ========================================================================
 -- GLOBAL STATE — text input + history
@@ -336,7 +337,9 @@ local function panic()
     for n = 1, 4 do
         crow.output[n].volts = 0
     end
-    -- MIDI all-notes-off is added in Task 3.2 once lib/midi_role.lua exists.
+    -- MIDI: send all-notes-off via Midi_Role's tracked active-note list.
+    -- Cleaner than CC123 blast — only stops notes WE sent.
+    Midi_Role.all_notes_off()
     -- Note: w/syn and w/del don't expose direct silence verbs. Their voices
     -- decay naturally via internal envelopes. Clearing Toggled (above) is
     -- the main mitigation — no new triggers will reach them.
@@ -534,6 +537,45 @@ local function add_params()
         action = function(v) crow.ii.wdel.filter(v) end,
     }
 
+    -- ────────────────────────────────────────────────────────────────────
+    -- MIDI GROUP (spec §3 — MIDI role; patterned on tehn/awake.lua)
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('midi', 3)
+
+    -- Device list built dynamically from midi.vports — option indices match
+    -- vport numbers, so params:get returns a value usable directly with
+    -- midi.connect(n). Built ONCE at add_params time; if the user plugs in
+    -- a new device after init, they must restart the script to see it
+    -- in the option list (matches awake.lua's idiom; norns doesn't expose
+    -- a vport-change callback).
+    params:add{
+        type = 'option',
+        id = 'midi_device',
+        name = 'midi out device',
+        options = Midi_Role.build_device_list(),
+        default = 1,
+        action = function(n)
+            Midi_Role.all_notes_off()  -- clean up before switching devices
+            Midi_Role.connect_device(n)
+        end,
+    }
+    params:add{
+        type = 'number',
+        id = 'midi_default_channel',
+        name = 'midi default channel',
+        min = 1, max = 16, default = 1,
+    }
+    -- Global note-off delay (in seconds) for every MIDI cell. Awake uses
+    -- clock-relative percentage; for schicksalslied where each cell has its
+    -- own seq_mode-driven rate, an absolute-time gate is simpler than
+    -- computing "percentage of next step" (which would require lookahead).
+    params:add{
+        type = 'control',
+        id = 'midi_gate_time',
+        name = 'midi gate time',
+        controlspec = controlspec.new(0.01, 5, 'exp', 0.001, 0.1, 's'),
+    }
+
     -- Sampler file params (16 slots) — Sub-plan A's Lied loads via engine.sampler_load
     -- (NOTE: this block stays here for now; Task 5.2 will move them into a
     -- proper 'samplers' group with the full per-sampler param block.)
@@ -609,6 +651,8 @@ function init()
     params:set_action('clock_tempo', function(bpm)
         engine.set_beat_sec(clock.get_beat_sec())
     end)
+
+    Midi_Role.init()
 
     Sequencer.start_all_clocks()
 
