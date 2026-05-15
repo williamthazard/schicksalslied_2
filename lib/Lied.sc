@@ -212,80 +212,89 @@ Lied {
 
     ensureGranularChain {
         if (granularAllocated) { ^this };
+        // Set flag BEFORE forking to gate re-entry on rapid double-press.
+        // There's a brief window (~one server.sync round-trip, ~5-20ms) where
+        // granularAllocated is true but the synths aren't yet allocated. The
+        // amp setters that depend on these check granularAllocated, so they
+        // will attempt micSynth.set(...) etc. and silently no-op for the
+        // window where micSynth is still nil. Acceptable trade-off vs the
+        // alternative of double-allocation.
+        granularAllocated = true;
         "Lied: allocating granular chain (8 grains)...".postln;
 
-        // Buffer + buses
-        delayBuf = Buffer.alloc(server, server.sampleRate * (beat_sec * 512), 1);
-        micBus = Bus.audio(server, 1);
-        ptrBus = Bus.audio(server, 1);
+        fork {
+            // Buffer + buses
+            delayBuf = Buffer.alloc(server, server.sampleRate * (beat_sec * 512), 1);
+            micBus = Bus.audio(server, 1);
+            ptrBus = Bus.audio(server, 1);
 
-        server.sync;
+            server.sync;
 
-        // Group hierarchy: mic → ptr → rec → gran, before voiceGroup
-        micGrp  = Group.before(voiceGroup);
-        ptrGrp  = Group.after(micGrp);
-        recGrp  = Group.after(ptrGrp);
-        granGrp = Group.after(recGrp);
+            // Group hierarchy: mic → ptr → rec → gran, before voiceGroup
+            micGrp  = Group.before(voiceGroup);
+            ptrGrp  = Group.after(micGrp);
+            recGrp  = Group.after(ptrGrp);
+            granGrp = Group.after(recGrp);
 
-        // Persistent chain synths (default amp = 0)
-        micSynth        = Synth(\liedMic,        [\in, 0, \out, micBus, \amp, 0],     micGrp);
-        micDrySynth     = Synth(\liedMicDry,     [\in, 0, \out, dryBus, \amp, 0],     micGrp);
-        fbPatchMixSynth = Synth(\liedFbPatchMix, [\in, 0, \out, micBus, \amp, 0],     micGrp, \addToHead);
-        ptrSynth        = Synth(\liedPtr,        [\buf, delayBuf, \out, ptrBus],      ptrGrp);
-        recSynth        = Synth(\liedRec,        [\ptrIn, ptrBus, \micIn, micBus, \buf, delayBuf], recGrp);
+            // Persistent chain synths (default amp = 0)
+            micSynth        = Synth(\liedMic,        [\in, 0, \out, micBus, \amp, 0],     micGrp);
+            micDrySynth     = Synth(\liedMicDry,     [\in, 0, \out, dryBus, \amp, 0],     micGrp);
+            fbPatchMixSynth = Synth(\liedFbPatchMix, [\in, 0, \out, micBus, \amp, 0],     micGrp, \addToHead);
+            ptrSynth        = Synth(\liedPtr,        [\buf, delayBuf, \out, ptrBus],      ptrGrp);
+            recSynth        = Synth(\liedRec,        [\ptrIn, ptrBus, \micIn, micBus, \buf, delayBuf], recGrp);
 
-        // Grain LFOs (8 each)
-        grainPanLFOs    = Array.fill(8, { 0 });
-        grainCutoffLFOs = Array.fill(8, { 0 });
-        grainResLFOs    = Array.fill(8, { 0 });
-        8.do({ arg i;
-            grainPanLFOs[i] = Ndef(
-                ("grainPan" ++ i).asSymbol,
-                { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(-1, 1); }
-            );
-            grainCutoffLFOs[i] = Ndef(
-                ("grainCutoff" ++ i).asSymbol,
-                { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(500, 15000); }
-            );
-            grainResLFOs[i] = Ndef(
-                ("grainRes" ++ i).asSymbol,
-                { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(0, 2); }
-            );
-        });
+            // Grain LFOs (8 each)
+            grainPanLFOs    = Array.fill(8, { 0 });
+            grainCutoffLFOs = Array.fill(8, { 0 });
+            grainResLFOs    = Array.fill(8, { 0 });
+            8.do({ arg i;
+                grainPanLFOs[i] = Ndef(
+                    ("grainPan" ++ i).asSymbol,
+                    { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(-1, 1); }
+                );
+                grainCutoffLFOs[i] = Ndef(
+                    ("grainCutoff" ++ i).asSymbol,
+                    { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(500, 15000); }
+                );
+                grainResLFOs[i] = Ndef(
+                    ("grainRes" ++ i).asSymbol,
+                    { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(0, 2); }
+                );
+            });
 
-        // Scrambled per-grain rates/durations/delays (8 grains)
-        grainRates  = [1/4, 1/2, 1, 3/2, 2].scramble;
-        grainDurs   = 8.collect({ arg i; beat_sec * (i + 1); }).scramble;
-        grainDelays = 8.collect({ arg i; server.sampleRate * (beat_sec * (i + 1)) * 16; }).scramble;
+            // Scrambled per-grain rates/durations/delays (8 grains)
+            grainRates  = [1/4, 1/2, 1, 3/2, 2].scramble;
+            grainDurs   = 8.collect({ arg i; beat_sec * (i + 1); }).scramble;
+            grainDelays = 8.collect({ arg i; server.sampleRate * (beat_sec * (i + 1)) * 16; }).scramble;
 
-        grainSynths = 8.collect({ arg n;
-            Synth(\liedGran, [
-                \amp, 0,
-                \buf, delayBuf,
-                \out, dryBus,
-                \atk, 1,
-                \rel, 1,
-                \gate, 1,
-                \sync, 1,
-                \dens, 1 / (grainDurs[n] * grainRates[n % 5]),
-                \baseDur, grainDurs[n],
-                \durRand, 1,
-                \rate, grainRates[n % 5],
-                \rateRand, 1,
-                \pan, grainPanLFOs[n],
-                \panRand, 0,
-                \grainEnv, -1,
-                \ptrBus, ptrBus,
-                \ptrSampleDelay, grainDelays[n],
-                \ptrRandSamples, server.sampleRate * (beat_sec * ((n % 8) + 1)) * 2,
-                \minPtrDelay, grainDelays[n],
-                \cutoff, grainCutoffLFOs[n],
-                \resonance, grainResLFOs[n]
-            ], granGrp);
-        });
+            grainSynths = 8.collect({ arg n;
+                Synth(\liedGran, [
+                    \amp, 0,
+                    \buf, delayBuf,
+                    \out, dryBus,
+                    \atk, 1,
+                    \rel, 1,
+                    \gate, 1,
+                    \sync, 1,
+                    \dens, 1 / (grainDurs[n] * grainRates[n % 5]),
+                    \baseDur, grainDurs[n],
+                    \durRand, 1,
+                    \rate, grainRates[n % 5],
+                    \rateRand, 1,
+                    \pan, grainPanLFOs[n],
+                    \panRand, 0,
+                    \grainEnv, -1,
+                    \ptrBus, ptrBus,
+                    \ptrSampleDelay, grainDelays[n],
+                    \ptrRandSamples, server.sampleRate * (beat_sec * ((n % 8) + 1)) * 2,
+                    \minPtrDelay, grainDelays[n],
+                    \cutoff, grainCutoffLFOs[n],
+                    \resonance, grainResLFOs[n]
+                ], granGrp);
+            });
 
-        granularAllocated = true;
-        "Lied granular chain allocated.".postln;
+            "Lied granular chain allocated.".postln;
+        };
     }
 
     // -----------------------------------------------------------------
