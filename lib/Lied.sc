@@ -409,6 +409,11 @@ Lied {
         }
     }
 
+    rerouteTriSin { arg cellId, busVal;
+        var inst = triSinInstances[cellId];
+        if (inst.notNil) { inst.reroute(busVal); }
+    }
+
     // -----------------------------------------------------------------
     // Ringer instance lifecycle (per row-2 cell)
     // -----------------------------------------------------------------
@@ -441,6 +446,11 @@ Lied {
         if (inst.notNil) {
             inst.setParam('all', paramKey, paramValue);
         }
+    }
+
+    rerouteRinger { arg cellId, busVal;
+        var inst = ringerInstances[cellId];
+        if (inst.notNil) { inst.reroute(busVal); }
     }
 
     // -----------------------------------------------------------------
@@ -484,6 +494,11 @@ Lied {
         }
     }
 
+    rerouteSampler { arg slot, busVal;
+        var inst = samplerInstances[slot];
+        if (inst.notNil) { inst.reroute(busVal); }
+    }
+
     // -----------------------------------------------------------------
     // OneShot instance lifecycle (per row-8 slot, 1-13)
     // -----------------------------------------------------------------
@@ -523,6 +538,11 @@ Lied {
         if (inst.notNil) {
             inst.setParam('all', paramKey, paramValue);
         }
+    }
+
+    rerouteOneShot { arg slot, busVal;
+        var inst = oneShotInstances[slot];
+        if (inst.notNil) { inst.reroute(busVal); }
     }
 
     // -----------------------------------------------------------------
