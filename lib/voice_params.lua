@@ -540,7 +540,7 @@ end
 -- SEQ_MODE param block per cell (4-option mode + sub-params per mode)
 -- ────────────────────────────────────────────────────────────────────────
 
-local SEQ_MODE_OPTIONS = { 'sequins-derived', 'fixed', 'user sequence', 'random' }
+local SEQ_MODE_OPTIONS = { 'lied', 'fixed', 'seq', 'random' }
 
 function VoiceParams.add_cell_seq_mode_block(x, y)
     local prefix = 'cell_' .. x .. '_' .. y .. '_seq_'
@@ -656,7 +656,7 @@ end
 -- VALUE_MODE param block per cell per value_kind ('position'|'duration'|'rate')
 -- ────────────────────────────────────────────────────────────────────────
 
-local VALUE_MODE_OPTIONS = { 'lied', 'fixed', 'user sequence', 'random' }
+local VALUE_MODE_OPTIONS = { 'lied', 'fixed', 'seq', 'random' }
 
 function VoiceParams.add_cell_value_mode_block(x, y, value_kind, range_lo, range_hi)
     local prefix = 'cell_' .. x .. '_' .. y .. '_' .. value_kind .. '_'

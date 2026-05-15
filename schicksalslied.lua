@@ -604,12 +604,13 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
-    -- ROW-2 CELLS GROUP (16 cells × 26 params + 4 bulk triggers = 420)
+    -- ROW-2 CELLS GROUP (16 cells × 26 params + 1 separator/cell + 4 bulk = 436)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'row-2 cells', 16 * 26 + 4)
+    params:add_group('row_2_cells', 'row-2 cells', 16 * 27 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
+            params:add_separator('row_2_cell_' .. x .. '_separator', 'cell ' .. x)
             VoiceParams.add_row2_cell_block(x)
         end
         params:add{
@@ -652,13 +653,15 @@ local function add_params()
     end
 
     -- ────────────────────────────────────────────────────────────────────
-    -- CELL SEQ MODES GROUP (64 cells × 14 params + 1 reset trigger = 897)
+    -- CELL SEQ MODES GROUP (64 cells × 14 params + 1 separator/cell + 1 reset = 961)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('cell_seq_modes', 'cell seq modes', 64 * 14 + 1)
+    params:add_group('cell_seq_modes', 'cell seq modes', 64 * 15 + 1)
     do
         local VoiceParams = include 'lib/voice_params'
         for y = 2, 8, 2 do
             for x = 1, 16 do
+                params:add_separator(string.format('seq_mode_cell_%d_%d_separator', x, y),
+                    string.format('cell %d-%d seq mode', x, y))
                 VoiceParams.add_cell_seq_mode_block(x, y)
             end
         end
@@ -672,17 +675,20 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- CELL VALUE MODES GROUP (sampler/oneshot cells only)
-    --   - Row 4/6 odd cols (sampler trigger, 16 cells): 2 kinds × 13 = 26/cell
-    --   - Row 4/6 even cols (sampler rate, 16 cells): 13/cell
-    --   - Row 8 cols 1-13 (one-shot, 13 cells): 13/cell
-    -- Total: 16×26 + 16×13 + 13×13 = 416 + 208 + 169 = 793 + 5 bulk = 798
+    --   - Row 4/6 odd cols (sampler trigger, 16 cells): 1 sep + 2 kinds × 13 = 27/cell → 16×27 = 432
+    --   - Row 4/6 even cols (sampler rate, 16 cells): 1 sep + 13 = 14/cell → 16×14 = 224
+    --   - Row 8 cols 1-13 (one-shot, 13 cells): 1 sep + 13 = 14/cell → 13×14 = 182
+    --   - 5 bulk triggers
+    -- Total: 432 + 224 + 182 + 5 = 843
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('cell_value_modes', 'cell value modes', 793 + 5)
+    params:add_group('cell_value_modes', 'cell value modes', 843)
     do
         local VoiceParams = include 'lib/voice_params'
         -- Sampler trigger cells (rows 4/6, odd cols 1,3,5,7,9,11,13,15)
         for y = 4, 6, 2 do
             for x = 1, 15, 2 do
+                params:add_separator(string.format('value_mode_cell_%d_%d_separator', x, y),
+                    string.format('cell %d-%d', x, y))
                 VoiceParams.add_cell_value_mode_block(x, y, 'position', 0, 0.9)
                 VoiceParams.add_cell_value_mode_block(x, y, 'duration', 0.001, 0.1)
             end
@@ -690,11 +696,15 @@ local function add_params()
         -- Sampler rate cells (rows 4/6, even cols 2,4,6,8,10,12,14,16)
         for y = 4, 6, 2 do
             for x = 2, 16, 2 do
+                params:add_separator(string.format('value_mode_cell_%d_%d_separator', x, y),
+                    string.format('cell %d-%d', x, y))
                 VoiceParams.add_cell_value_mode_block(x, y, 'rate', -16, 16)
             end
         end
         -- One-shot cells (row 8, cols 1-13)
         for x = 1, 13 do
+            params:add_separator(string.format('value_mode_cell_%d_8_separator', x),
+                string.format('cell %d-8', x))
             VoiceParams.add_cell_value_mode_block(x, 8, 'rate', -16, 16)
         end
 
@@ -771,12 +781,13 @@ local function add_params()
     end
 
     -- ────────────────────────────────────────────────────────────────────
-    -- SAMPLERS GROUP (16 slots × 10 params + 1 randomize-all = 161)
+    -- SAMPLERS GROUP (16 slots × 10 params + 1 separator/slot + 1 randomize-all = 177)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('samplers', 'samplers', 16 * 10 + 1)
+    params:add_group('samplers', 'samplers', 16 * 11 + 1)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 16 do
+            params:add_separator('sampler_' .. slot .. '_separator', 'sampler ' .. slot)
             -- File param (PSET-savable, triggers buffer load on path set)
             params:add{
                 type = 'file',
@@ -805,12 +816,13 @@ local function add_params()
         }
     end
     -- ────────────────────────────────────────────────────────────────────
-    -- ONE-SHOT SAMPLERS GROUP (13 slots × 10 params + 1 randomize-all = 131)
+    -- ONE-SHOT SAMPLERS GROUP (13 slots × 10 params + 1 separator/slot + 1 randomize-all = 144)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 10 + 1)
+    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 11 + 1)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 13 do
+            params:add_separator('oneshot_' .. slot .. '_separator', 'one-shot ' .. slot)
             params:add{
                 type = 'file',
                 id = 'oneshot_' .. slot .. '_file',
@@ -838,13 +850,27 @@ local function add_params()
     end
 
     -- ────────────────────────────────────────────────────────────────────
-    -- LFOs (auto-grouped by the lfo library)
+    -- LFOs GROUP — wraps all 282 LFOs added by lib/lied_lfos.
+    -- Per-LFO param count verified by reading lfo.lua on disk:
+    --   15 params per LFO (lfo_state, shape, depth, phase, offset, scaled,
+    --   raw, min, max, baseline, mode, clocked, free, reset, reset_target).
+    --   Note: lfo.lua declares `params_per_entry = 14` internally but that
+    --   constant predates the addition of lfo_phase; actual count is 15.
+    -- Category separators (4) enable K3 navigation across LFO categories.
+    -- Total: (160 + 64 + 52 + 6) × 15 + 4 = 282 × 15 + 4 = 4234
     -- ────────────────────────────────────────────────────────────────────
     do
         local LiedLfos = include 'lib/lied_lfos'
+        local per_lfo = 15  -- params added by each LFO (verified from lfo.lua)
+        local total = (160 + 64 + 52 + 6) * per_lfo + 4  -- + 4 separators
+        params:add_group('lfos', 'LFOs', total)
+        params:add_separator('lfos_row_2_separator', 'row 2 voice LFOs')
         LiedLfos.bind_row_2_lfos()
+        params:add_separator('lfos_sampler_separator', 'sampler LFOs')
         LiedLfos.bind_sampler_lfos()
+        params:add_separator('lfos_oneshot_separator', 'one-shot LFOs')
         LiedLfos.bind_oneshot_lfos()
+        params:add_separator('lfos_crow_separator', 'crow LFOs')
         LiedLfos.bind_crow_lfos()
     end
 
