@@ -326,13 +326,6 @@ function redraw()
     screen.move(5, 59)
     screen.text("> " .. Displayed_String)
 
-    -- Staged line indicator at y≈40 — only show if My_String is non-empty AND
-    -- different from Displayed_String (avoid redundant display right after ENTER)
-    if #My_String > 0 and My_String ~= Displayed_String then
-        screen.move(5, 40)
-        screen.text("* " .. My_String)
-    end
-
     -- History items above (up to 4-5 lines, scrolling up)
     for i = 1, 5 do
         if not (History_Index - i >= 0) then break end
@@ -349,6 +342,10 @@ end
 
 local function tap_tempo()
     local now = util.time()
+    -- If the last tap was more than 3 seconds ago, start fresh
+    if #Tap_Tempo_Times > 0 and (now - Tap_Tempo_Times[#Tap_Tempo_Times]) > 3 then
+        Tap_Tempo_Times = {}
+    end
     table.insert(Tap_Tempo_Times, now)
     if #Tap_Tempo_Times > 4 then
         table.remove(Tap_Tempo_Times, 1)
@@ -363,15 +360,33 @@ local function tap_tempo()
         avg = avg / #intervals
         local bpm = 60 / avg
         bpm = util.clamp(bpm, 20, 400)
+        bpm = math.floor(bpm + 0.5)  -- round to nearest integer
         params:set('clock_tempo', bpm)
-        print(string.format('tap tempo: %.1f bpm', bpm))
+        print(string.format('tap tempo: %d bpm', bpm))
     end
 end
 
 local function panic()
+    -- Clear all toggle state so the sequencer stops dispatching
+    for x = 1, 16 do
+        for y = 2, 8, 2 do
+            Sequencer.Toggled[x][y] = false
+        end
+    end
+    -- Free SC voice instances (will be re-allocated lazily when user re-toggles cells)
     Roles.free_all()
+    -- Clear w/tape looper running flags
+    Roles.looper_running = {}
+    -- Silence the persistent granular delay chain + mic passthrough
+    engine.set_mic_amp(0)
+    engine.set_mic_dry_amp(0)
+    engine.set_granular_out_amp(0)
+    engine.set_fb_amp(0)
+    -- Stop crow / JF
     crow.ii.jf.run(0)
-    print('PANIC: freed all voices')
+    -- Mark grid dirty so the LEDs reflect the now-cleared toggle state
+    Grid_Dirty = true
+    print('PANIC: silenced everything')
 end
 
 function key(n, z)
