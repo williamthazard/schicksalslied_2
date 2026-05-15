@@ -23,6 +23,15 @@ Engine_Lied : CroneEngine {
         this.addCommand(\set_fb_noise,        "f", { arg msg; kernel.setFbPatchNoiseLevel(msg[1]); });
         this.addCommand(\set_fb_sine_level,   "f", { arg msg; kernel.setFbPatchSineLevel(msg[1]); });
         this.addCommand(\set_fb_sine_hz,      "f", { arg msg; kernel.setFbPatchSineHz(msg[1]); });
+        this.addCommand(\set_grain_pan_rate, "if", { arg msg;
+            kernel.setGrainPanRate(msg[1].asInteger, msg[2]);
+        });
+        this.addCommand(\set_grain_cutoff_rate, "if", { arg msg;
+            kernel.setGrainCutoffRate(msg[1].asInteger, msg[2]);
+        });
+        this.addCommand(\set_grain_res_rate, "if", { arg msg;
+            kernel.setGrainResRate(msg[1].asInteger, msg[2]);
+        });
 
         // -----------------------------------------------------------------
         // Voice instance lifecycle (per row-2 cell, cellId is string)

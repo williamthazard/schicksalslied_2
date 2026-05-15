@@ -17,6 +17,7 @@ Lied {
     var <grainSynths;
     var <grainPanLFOs, <grainCutoffLFOs, <grainResLFOs;
     var <grainRates, <grainDurs, <grainDelays;
+    var <grainPanRates, <grainCutoffRates, <grainResRates;
     var <granularAllocated;
 
     *new { arg server;
@@ -193,6 +194,9 @@ Lied {
             outGroup);
 
         granularAllocated = false;
+        grainPanRates    = Array.fill(8, { rrand(1, 64) });
+        grainCutoffRates = Array.fill(8, { rrand(1, 64) });
+        grainResRates    = Array.fill(8, { rrand(1, 64) });
 
         "Lied initialized.".postln;
     }
@@ -248,18 +252,24 @@ Lied {
             grainCutoffLFOs = Array.fill(8, { 0 });
             grainResLFOs    = Array.fill(8, { 0 });
             8.do({ arg i;
+                var panRate = grainPanRates[i];
+                var cutoffRate = grainCutoffRates[i];
+                var resRate = grainResRates[i];
                 grainPanLFOs[i] = Ndef(
                     ("grainPan" ++ i).asSymbol,
-                    { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(-1, 1); }
+                    { |rate=8| LFTri.kr(1 / (rate * beat_sec)).range(-1, 1); }
                 );
+                grainPanLFOs[i].set(\rate, panRate);
                 grainCutoffLFOs[i] = Ndef(
                     ("grainCutoff" ++ i).asSymbol,
-                    { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(500, 15000); }
+                    { |rate=8| LFTri.kr(1 / (rate * beat_sec)).range(500, 15000); }
                 );
+                grainCutoffLFOs[i].set(\rate, cutoffRate);
                 grainResLFOs[i] = Ndef(
                     ("grainRes" ++ i).asSymbol,
-                    { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(0, 2); }
+                    { |rate=8| LFTri.kr(1 / (rate * beat_sec)).range(0, 2); }
                 );
+                grainResLFOs[i].set(\rate, resRate);
             });
 
             // Scrambled per-grain rates/durations/delays (8 grains)
@@ -373,6 +383,27 @@ Lied {
 
     setFbPatchSineHz { arg hz;
         if (granularAllocated) { fbPatchMixSynth.set(\sineHz, hz) };
+    }
+
+    setGrainPanRate { arg grainIdx, rate;
+        grainPanRates[grainIdx] = rate;
+        if (granularAllocated and: { grainPanLFOs[grainIdx].notNil }) {
+            grainPanLFOs[grainIdx].set(\rate, rate);
+        };
+    }
+
+    setGrainCutoffRate { arg grainIdx, rate;
+        grainCutoffRates[grainIdx] = rate;
+        if (granularAllocated and: { grainCutoffLFOs[grainIdx].notNil }) {
+            grainCutoffLFOs[grainIdx].set(\rate, rate);
+        };
+    }
+
+    setGrainResRate { arg grainIdx, rate;
+        grainResRates[grainIdx] = rate;
+        if (granularAllocated and: { grainResLFOs[grainIdx].notNil }) {
+            grainResLFOs[grainIdx].set(\rate, rate);
+        };
     }
 
     // -----------------------------------------------------------------
