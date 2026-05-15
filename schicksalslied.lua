@@ -437,6 +437,12 @@ function init()
     add_params()
     params:bang()
 
+    -- Push initial beat_sec to SC, then re-push on every clock_tempo change.
+    engine.set_beat_sec(clock.get_beat_sec())
+    params:set_action('clock_tempo', function(bpm)
+        engine.set_beat_sec(clock.get_beat_sec())
+    end)
+
     Sequencer.start_all_clocks()
 
     -- Screen redraw timer at 15fps
