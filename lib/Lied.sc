@@ -40,6 +40,7 @@ Lied {
         dryBus    = Bus.audio(server, 2);
         reverbBus = Bus.audio(server, 2);
         delayBus  = Bus.audio(server, 2);
+        ("Lied buses: dryBus=" ++ dryBus.index ++ " reverbBus=" ++ reverbBus.index ++ " delayBus=" ++ delayBus.index).postln;
 
         // --- Group hierarchy ---
         //   server default group
