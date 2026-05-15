@@ -4,13 +4,17 @@
 
 (
 Routine({
-    var kernel, testSynth;
+    var kernel, testSynth, o;
 
-    Server.default.options.numInputBusChannels = 0;
-    Server.default.options.sampleRate = 48000;
-    // To hardcode the audio output device (e.g. when airpods auto-take-over
-    // the macOS default and cause sample-rate distortion), uncomment and edit:
-    Server.default.options.outDevice_("MacBook Air Speakers");
+    // Pin BOTH input and output devices: if only outDevice is set, SC's
+    // input-side device selection can trigger a macOS aggregate-device
+    // fallback to whatever owns the system default (e.g. connected AirPods),
+    // which drags output with it. Setting both keeps the session on built-in.
+    o = Server.default.options;
+    o.numInputBusChannels = 0;
+    o.sampleRate = 48000;
+    o.outDevice_("MacBook Air Speakers");
+    o.inDevice_("MacBook Air Microphone");
     "Booting SuperCollider server...".postln;
     Server.default.bootSync;
     if (Server.default.serverRunning.not) {
