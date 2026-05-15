@@ -637,17 +637,34 @@ local function add_params()
             end,
         }
     end
-    -- One-shot file params (13 slots) — same note: Task 5.3 relocates these.
-    for slot = 1, 13 do
+    -- ────────────────────────────────────────────────────────────────────
+    -- ONE-SHOT SAMPLERS GROUP (13 slots × 10 params + 1 randomize-all = 131)
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('one_shot_samplers', 13 * 10 + 1)
+    do
+        local VoiceParams = require 'lib/voice_params'
+        for slot = 1, 13 do
+            params:add{
+                type = 'file',
+                id = 'oneshot_' .. slot .. '_file',
+                name = 'one-shot ' .. slot .. ' file',
+                action = function(path)
+                    if path == nil or path == '' or path == '-' then
+                        engine.oneshot_clear(slot)
+                    else
+                        engine.oneshot_load(slot, path)
+                    end
+                end,
+            }
+            VoiceParams.add_oneshot_block(slot)
+        end
         params:add{
-            type = 'file',
-            id = 'oneshot_' .. slot .. '_file',
-            name = 'one-shot ' .. slot,
-            action = function(path)
-                if path == nil or path == '' or path == '-' then
-                    engine.oneshot_clear(slot)
-                else
-                    engine.oneshot_load(slot, path)
+            type = 'trigger',
+            id = 'oneshots_randomize_all',
+            name = 'randomize all one-shots',
+            action = function()
+                for slot = 1, 13 do
+                    VoiceParams.randomize_oneshot(slot)
                 end
             end,
         }
