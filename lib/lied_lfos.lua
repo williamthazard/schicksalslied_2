@@ -114,19 +114,4 @@ function LiedLfos.add_crow_lfos_group()
     LiedLfos.bind('wdel_filter_cutoff', 'wdel_filter_cutoff', 0, 1, 'w/del filter cutoff')
 end
 
--- Legacy convenience: bind_batch (kept for compatibility; unused now)
-function LiedLfos.bind_batch(config)
-    for _, entry in ipairs(config) do
-        LiedLfos.bind(entry[1], entry[2], entry[3], entry[4])
-    end
-end
-
--- Keep the original bind_*_lfos names as error stubs so existing callers
--- break loudly before we update them. NOTE: schicksalslied.lua MUST use the
--- new add_*_lfos_group functions instead.
-LiedLfos.bind_row_2_lfos  = function() error('bind_row_2_lfos deprecated — use add_row_2_lfos_group()') end
-LiedLfos.bind_sampler_lfos = function() error('bind_sampler_lfos deprecated — use add_sampler_lfos_group()') end
-LiedLfos.bind_oneshot_lfos = function() error('bind_oneshot_lfos deprecated — use add_oneshot_lfos_group()') end
-LiedLfos.bind_crow_lfos    = function() error('bind_crow_lfos deprecated — use add_crow_lfos_group()') end
-
 return LiedLfos

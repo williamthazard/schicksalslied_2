@@ -48,6 +48,9 @@ end
 -- seq is the cell's sequins-byte-reader function.
 function Midi.dispatch(x, y, seq)
     if Midi.device == nil then return end
+    -- include 'lib/cell_roles' lives inside the function (not at module top)
+    -- to avoid the circular: cell_roles → midi_role → cell_roles.
+    -- The include is cached after first call.
     local Roles = include 'lib/cell_roles'
     local cell_id = string.format("%d_%d", x, y)
     local channel = params:get('cell_' .. x .. '_2_midi_channel') or 1

@@ -221,6 +221,7 @@ end
 -- ========================================================================
 
 function grid_redraw()
+    if g == nil then return end  -- no grid connected
     g:all(0)
     -- Row 1: history slots. 0 if empty, 4 if filled, 15 if held
     for x = 1, 16 do
@@ -263,6 +264,8 @@ end
 
 function redraw()
     screen.clear()
+    screen.aa(0)
+    screen.line_width(1)
     screen.level(10)
 
     -- Input box at the bottom (y 50-64)
@@ -366,7 +369,7 @@ function key(n, z)
 end
 
 function enc(n, d)
-    -- Reserved for future use; no encoder actions in Sub-plan B
+    -- (no encoder actions currently)
 end
 
 -- ========================================================================
@@ -396,6 +399,8 @@ end
 -- PARAMS (Sub-plan C global group + full menu)
 -- ========================================================================
 local function add_params()
+    params:add_separator('schicksalslied_top', 'SCHICKSALSLIED')
+
     -- ────────────────────────────────────────────────────────────────────
     -- GLOBAL GROUP (spec §9)
     -- ────────────────────────────────────────────────────────────────────
