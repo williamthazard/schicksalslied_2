@@ -603,19 +603,36 @@ local function add_params()
         controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
     }
 
-    -- Sampler file params (16 slots) — Sub-plan A's Lied loads via engine.sampler_load
-    -- (NOTE: this block stays here for now; Task 5.2 will move them into a
-    -- proper 'samplers' group with the full per-sampler param block.)
-    for slot = 1, 16 do
+    -- ────────────────────────────────────────────────────────────────────
+    -- SAMPLERS GROUP (16 slots × 10 params + 1 randomize-all = 161)
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('samplers', 16 * 10 + 1)
+    do
+        local VoiceParams = require 'lib/voice_params'
+        for slot = 1, 16 do
+            -- File param (PSET-savable, triggers buffer load on path set)
+            params:add{
+                type = 'file',
+                id = 'sampler_' .. slot .. '_file',
+                name = 'sampler ' .. slot .. ' file',
+                action = function(path)
+                    if path == nil or path == '' or path == '-' then
+                        engine.sampler_clear(slot)
+                    else
+                        engine.sampler_load(slot, path)
+                    end
+                end,
+            }
+            -- 9 voice params from the helper
+            VoiceParams.add_sampler_block(slot)
+        end
         params:add{
-            type = 'file',
-            id = 'sampler_' .. slot .. '_file',
-            name = 'sampler ' .. slot,
-            action = function(path)
-                if path == nil or path == '' or path == '-' then
-                    engine.sampler_clear(slot)
-                else
-                    engine.sampler_load(slot, path)
+            type = 'trigger',
+            id = 'samplers_randomize_all',
+            name = 'randomize all samplers',
+            action = function()
+                for slot = 1, 16 do
+                    VoiceParams.randomize_sampler(slot)
                 end
             end,
         }
