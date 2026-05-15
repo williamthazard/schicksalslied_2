@@ -198,7 +198,7 @@ Server.default.sync;
 
 "Test 14: granular chain allocation check (silent — verify nothing crashes)".postln;
 kernel.ensureGranularChain;
-server.sync;
+Server.default.sync;
 0.5.wait;
 ("  8 grain synths: " ++ kernel.grainSynths.size).postln;
 ("  delayBuf frames: " ++ kernel.delayBuf.numFrames).postln;
@@ -239,6 +239,33 @@ kernel.setGranularOutAmp(0.2);
 kernel.setGranularOutAmp(0);
 "  granular_out_amp = 0 (expecting silence)".postln;
 2.0.wait;
+
+    // Test 17: reroute (voice survives bus change)
+    "Test 17: TriSin reroute...".postln;
+    kernel.allocTriSin(\reroute_test);
+    kernel.triggerTriSin(\reroute_test, \1, 440);
+    1.0.wait;
+    // Reroute to reverbBus (route audio through the reverb chain)
+    kernel.rerouteTriSin(\reroute_test, kernel.reverbBus.index);
+    0.5.wait;
+    kernel.triggerTriSin(\reroute_test, \1, 660);
+    1.5.wait;
+    kernel.freeTriSin(\reroute_test);
+    "  TriSin reroute survived (no SC error).".postln;
+
+    // Test 18: grain LFO rate setter (after lazy chain allocation)
+    "Test 18: grain LFO rate live update...".postln;
+    kernel.setMicAmp(0.0001);  // tiny amp triggers lazy alloc
+    2.0.wait;  // wait for fork{} to complete granular alloc
+    8.do({ arg i;
+        kernel.setGrainPanRate(i, 16);
+        kernel.setGrainCutoffRate(i, 32);
+        kernel.setGrainResRate(i, 8);
+    });
+    0.5.wait;
+    kernel.setMicAmp(0);
+    kernel.freeGranularChain;
+    "  Grain LFO rate setters survived.".postln;
 
     kernel.free;
     "All tests passed.".postln;
