@@ -161,7 +161,7 @@ function Sequencer.toggle_pause()
                 clock.sync(1)
                 Sequencer.Paused = false
                 Sequencer.Unpause_Pending = false
-                Grid_Dirty = true
+                grid_dirty = true
             end)
         end
     else
@@ -171,7 +171,7 @@ function Sequencer.toggle_pause()
                 clock.sync(1)
                 Sequencer.Paused = true
                 Sequencer.Pause_Pending = false
-                Grid_Dirty = true
+                grid_dirty = true
             end)
         end
     end

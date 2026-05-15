@@ -17,30 +17,39 @@ engine.name = 'Lied'
 local Sequencer  = include 'lib/sequencer'
 local Roles      = include 'lib/cell_roles'
 local MusicUtil  = require 'musicutil'
-Midi_Role        = include 'lib/midi_role'
+local Midi       = include 'lib/midi_role'
 local Grain      = include 'lib/grid_grain_params'
 
 -- ========================================================================
--- GLOBAL STATE — text input + history
+-- MODULE-LEVEL LOCALS — text input + history
 -- ========================================================================
-Displayed_String = ""    -- live typing buffer
-My_String        = ""    -- staged line, set by ENTER and row-1 release
-History          = {}    -- typed + file-loaded lines, indexed 1..N
-History_Index    = 0
-New_Line         = false
-Needs_Restart    = false -- legacy from 1.x's FormantTriPTR install; always false in 2.0
+local displayed_string = ""    -- live typing buffer
+local my_string        = ""    -- staged line, set by ENTER and row-1 release
+local history          = {}    -- typed + file-loaded lines, indexed 1..N
+local history_index    = 0
+local new_line         = false
+local needs_restart    = false -- legacy from 1.x's FormantTriPTR install; always false in 2.0
 
 -- ========================================================================
 -- GRID + SCREEN
 -- ========================================================================
-G                = grid.connect()
+local g = grid.connect()
+
+-- Metro handles — declared here so both init() and cleanup() can see them.
+local screen_metro, grid_metro, fire_decay_metro
+
+-- K1/K2/K3 state for tap-tempo
+local tap_tempo_times = {}
+
+-- grid_dirty stays a global (sequencer.lua's toggle_pause writes to it)
+grid_dirty = true
 
 -- Hotplug handlers — fire when a grid is connected/disconnected at runtime.
 -- Without grid.add, if the user plugs in a grid AFTER script init, the LEDs
--- stay dark until the first grid press (which sets Grid_Dirty via G.key).
+-- stay dark until the first grid press (which sets grid_dirty via g.key).
 grid.add = function(dev)
-    G = grid.connect()
-    Grid_Dirty = true
+    g = grid.connect()
+    grid_dirty = true
     print('grid connected: ' .. (dev.name or 'unknown'))
 end
 
@@ -48,15 +57,10 @@ grid.remove = function(dev)
     print('grid disconnected: ' .. (dev.name or 'unknown'))
 end
 
-Grid_Dirty       = true
-
--- K1/K2/K3 state for tap-tempo
-Tap_Tempo_Times  = {}
-
 -- ========================================================================
 -- CROW INIT FUNCTION
 -- ========================================================================
-function crow_reinit()
+local function crow_reinit()
     crow.input[1].mode('clock')
     crow.ii.pullup(true)
     crow.ii.jf.mode(1)
@@ -87,10 +91,10 @@ local function load_text_file(path)
     io.input(path)
     for line in io.lines() do
         if #line > 0 then
-            table.insert(History, line)
+            table.insert(history, line)
         end
     end
-    Grid_Dirty = true
+    grid_dirty = true
     redraw()
 end
 
@@ -99,48 +103,48 @@ end
 -- ========================================================================
 
 keyboard.char = function(character)
-    if #Displayed_String < 200 then
-        Displayed_String = Displayed_String .. character
+    if #displayed_string < 200 then
+        displayed_string = displayed_string .. character
     end
 end
 
 keyboard.code = function(code, val)
     if val == 0 then return end
     if code == 'BACKSPACE' then
-        Displayed_String = Displayed_String:sub(1, -2)
+        displayed_string = displayed_string:sub(1, -2)
     elseif code == 'UP' then
-        if #History == 0 then return end
-        if New_Line then
-            History_Index = #History - 1
-            New_Line = false
+        if #history == 0 then return end
+        if new_line then
+            history_index = #history - 1
+            new_line = false
         else
-            History_Index = util.clamp(History_Index - 1, 0, #History)
+            history_index = util.clamp(history_index - 1, 0, #history)
         end
-        Displayed_String = History[History_Index + 1] or ""
+        displayed_string = history[history_index + 1] or ""
     elseif code == 'DOWN' then
-        if #History == 0 or History_Index == nil then return end
-        History_Index = util.clamp(History_Index + 1, 0, #History)
-        if History_Index == #History then
-            Displayed_String = ""
-            New_Line = true
+        if #history == 0 or history_index == nil then return end
+        history_index = util.clamp(history_index + 1, 0, #history)
+        if history_index == #history then
+            displayed_string = ""
+            new_line = true
         else
-            Displayed_String = History[History_Index + 1] or ""
+            displayed_string = history[history_index + 1] or ""
         end
-    elseif code == 'ENTER' and #Displayed_String > 0 then
-        -- ENTER promotes Displayed_String to My_String, adds to History,
-        -- clears Displayed_String (per spec §7 text input flow)
-        My_String = Displayed_String
-        table.insert(History, Displayed_String)
-        Displayed_String = ""
-        History_Index = #History
-        New_Line = true
-        Grid_Dirty = true
+    elseif code == 'ENTER' and #displayed_string > 0 then
+        -- ENTER promotes displayed_string to my_string, adds to history,
+        -- clears displayed_string (per spec §7 text input flow)
+        my_string = displayed_string
+        table.insert(history, displayed_string)
+        displayed_string = ""
+        history_index = #history
+        new_line = true
+        grid_dirty = true
     elseif keyboard.ctrl() then
-        -- Ctrl chord: remove last History entry, clear Displayed_String
-        table.remove(History, #History)
-        History_Index = #History
-        Displayed_String = ""
-        Grid_Dirty = true
+        -- Ctrl chord: remove last history entry, clear displayed_string
+        table.remove(history, #history)
+        history_index = #history
+        displayed_string = ""
+        grid_dirty = true
     end
 end
 
@@ -148,17 +152,17 @@ end
 -- GRID HANDLER (spec §3 + §11)
 -- ========================================================================
 
-G.key = function(x, y, z)
+g.key = function(x, y, z)
     Sequencer.Momentary[x][y] = (z == 1)
-    Grid_Dirty = true
+    grid_dirty = true
 
     if y == 1 then
         -- History row
-        if x + 16 * (y - 1) > #History then return end
+        if x + 16 * (y - 1) > #history then return end
         if z == 1 then
-            -- Press: append history[x + 16*(y-1)] to Displayed_String
-            My_String = Displayed_String .. History[x + 16 * (y - 1)]
-            Displayed_String = My_String
+            -- Press: append history[x + 16*(y-1)] to displayed_string
+            my_string = displayed_string .. history[x + 16 * (y - 1)]
+            displayed_string = my_string
         else
             -- Release: check if any other row-1 buttons are still held
             local any_held = false
@@ -166,12 +170,12 @@ G.key = function(x, y, z)
                 if Sequencer.Momentary[col][1] then any_held = true; break end
             end
             if any_held then return end
-            -- All released — set My_String from current Displayed_String
-            if #Displayed_String > 0 then
-                My_String = Displayed_String
+            -- All released — set my_string from current displayed_string
+            if #displayed_string > 0 then
+                my_string = displayed_string
             end
-            Displayed_String = ""
-            New_Line = true
+            displayed_string = ""
+            new_line = true
         end
 
     elseif y == 2 or y == 4 or y == 6 or y == 8 then
@@ -203,10 +207,10 @@ G.key = function(x, y, z)
         end
 
     elseif y == 3 or y == 5 or y == 7 then
-        -- Assign row: press assigns My_String to the cell at (x, y-1)
+        -- Assign row: press assigns my_string to the cell at (x, y-1)
         if z == 1 then
-            if #My_String > 0 then
-                Sequencer.assign(x, y - 1, My_String)
+            if #my_string > 0 then
+                Sequencer.assign(x, y - 1, my_string)
             end
         end
     end
@@ -217,15 +221,15 @@ end
 -- ========================================================================
 
 function grid_redraw()
-    G:all(0)
+    g:all(0)
     -- Row 1: history slots. 0 if empty, 4 if filled, 15 if held
     for x = 1, 16 do
         local idx = x  -- slot index = col for row 1
-        if idx <= #History then
-            G:led(x, 1, 4)
+        if idx <= #history then
+            g:led(x, 1, 4)
         end
         if Sequencer.Momentary[x][1] then
-            G:led(x, 1, 15)
+            g:led(x, 1, 15)
         end
     end
     -- Rows 2/4/6/8 (toggle rows): 0 idle, 15 toggled-on, 15 held.
@@ -234,23 +238,23 @@ function grid_redraw()
         for y = 2, 8, 2 do
             if Sequencer.Toggled[x][y] then
                 local level = Sequencer.Paused and 6 or 15
-                G:led(x, y, level)
+                g:led(x, y, level)
             end
             if Sequencer.Momentary[x][y] then
-                G:led(x, y, 15)
+                g:led(x, y, 15)
             end
         end
     end
     -- Rows 3/5/7 (momentary): 4 idle, 15 held
     for x = 1, 16 do
         for y = 3, 7, 2 do
-            G:led(x, y, 4)
+            g:led(x, y, 4)
             if Sequencer.Momentary[x][y] then
-                G:led(x, y, 15)
+                g:led(x, y, 15)
             end
         end
     end
-    G:refresh()
+    g:refresh()
 end
 
 -- ========================================================================
@@ -265,13 +269,13 @@ function redraw()
     screen.rect(2, 50, 125, 14)
     screen.stroke()
     screen.move(5, 59)
-    screen.text("> " .. Displayed_String)
+    screen.text("> " .. displayed_string)
 
     -- History items above (up to 4-5 lines, scrolling up)
     for i = 1, 5 do
-        if not (History_Index - i >= 0) then break end
+        if not (history_index - i >= 0) then break end
         screen.move(5, 55 - 10 * i)
-        screen.text(History[History_Index - i + 1] or "")
+        screen.text(history[history_index - i + 1] or "")
     end
 
     screen.update()
@@ -284,17 +288,17 @@ end
 local function tap_tempo()
     local now = util.time()
     -- If the last tap was more than 3 seconds ago, start fresh
-    if #Tap_Tempo_Times > 0 and (now - Tap_Tempo_Times[#Tap_Tempo_Times]) > 3 then
-        Tap_Tempo_Times = {}
+    if #tap_tempo_times > 0 and (now - tap_tempo_times[#tap_tempo_times]) > 3 then
+        tap_tempo_times = {}
     end
-    table.insert(Tap_Tempo_Times, now)
-    if #Tap_Tempo_Times > 4 then
-        table.remove(Tap_Tempo_Times, 1)
+    table.insert(tap_tempo_times, now)
+    if #tap_tempo_times > 4 then
+        table.remove(tap_tempo_times, 1)
     end
-    if #Tap_Tempo_Times >= 2 then
+    if #tap_tempo_times >= 2 then
         local intervals = {}
-        for i = 2, #Tap_Tempo_Times do
-            table.insert(intervals, Tap_Tempo_Times[i] - Tap_Tempo_Times[i - 1])
+        for i = 2, #tap_tempo_times do
+            table.insert(intervals, tap_tempo_times[i] - tap_tempo_times[i - 1])
         end
         local avg = 0
         for _, v in ipairs(intervals) do avg = avg + v end
@@ -338,14 +342,14 @@ local function panic()
     for n = 1, 4 do
         crow.output[n].volts = 0
     end
-    -- MIDI: send all-notes-off via Midi_Role's tracked active-note list.
+    -- MIDI: send all-notes-off via Midi's tracked active-note list.
     -- Cleaner than CC123 blast — only stops notes WE sent.
-    Midi_Role.all_notes_off()
+    Midi.all_notes_off()
     -- Note: w/syn and w/del don't expose direct silence verbs. Their voices
     -- decay naturally via internal envelopes. Clearing Toggled (above) is
     -- the main mitigation — no new triggers will reach them.
     -- Mark grid dirty so the LEDs reflect the now-cleared toggle state
-    Grid_Dirty = true
+    grid_dirty = true
     print('PANIC: silenced everything')
 end
 
@@ -355,7 +359,7 @@ function key(n, z)
         panic()
     elseif n == 2 then
         Sequencer.toggle_pause()
-        Grid_Dirty = true
+        grid_dirty = true
     elseif n == 3 then
         tap_tempo()
     end
@@ -372,13 +376,13 @@ end
 -- one-shot + granular param and randomizes within reasonable bounds.
 -- The per-family randomize functions are defined in lib/voice_params (added
 -- in Sub-plan C Task 5.1). Until that module exists, this function calls
--- functions that don't yet exist — calling Global_Randomize will fail at
+-- functions that don't yet exist — calling global_randomize will fail at
 -- runtime until those tasks complete. (Wiring the param now keeps the menu
 -- structure stable; the action callback gracefully fails until then.)
-function Global_Randomize()
+local function global_randomize()
     local ok, VoiceParams = pcall(require, 'lib/voice_params')
     if not ok then
-        print('Global_Randomize: lib/voice_params not yet present, skipping')
+        print('global_randomize: lib/voice_params not yet present, skipping')
         return
     end
     for x = 1, 16 do VoiceParams.randomize_row2_cell(x) end
@@ -413,7 +417,7 @@ local function add_params()
         type = 'trigger',
         id = 'pause_resume',
         name = 'pause / resume',
-        action = function() Sequencer.toggle_pause(); Grid_Dirty = true; end,
+        action = function() Sequencer.toggle_pause(); grid_dirty = true; end,
     }
     params:add{
         type = 'trigger',
@@ -425,7 +429,7 @@ local function add_params()
         type = 'trigger',
         id = 'global_randomize',
         name = 'global randomize',
-        action = function() Global_Randomize() end,
+        action = function() global_randomize() end,
     }
     params:add{
         type = 'trigger',
@@ -573,11 +577,11 @@ local function add_params()
         type = 'option',
         id = 'midi_device',
         name = 'midi out device',
-        options = Midi_Role.build_device_list(),
+        options = Midi.build_device_list(),
         default = 1,
         action = function(n)
-            Midi_Role.all_notes_off()  -- clean up before switching devices
-            Midi_Role.connect_device(n)
+            Midi.all_notes_off()  -- clean up before switching devices
+            Midi.connect_device(n)
         end,
     }
     params:add{
@@ -857,7 +861,7 @@ function init()
         engine.set_beat_sec(clock.get_beat_sec())
     end)
 
-    Midi_Role.init()
+    Midi.init()
 
     -- After params:bang, force-fire each cell role action so initial visibility
     -- is correct (params:bang fires actions but params:hide may not propagate
@@ -898,36 +902,36 @@ function init()
     Sequencer.start_all_clocks()
 
     -- Screen redraw timer at 15fps
-    Screen_Metro = metro.init()
-    Screen_Metro.time = 1/15
-    Screen_Metro.event = function() redraw() end
-    Screen_Metro:start()
+    screen_metro = metro.init()
+    screen_metro.time = 1/15
+    screen_metro.event = function() redraw() end
+    screen_metro:start()
 
     -- Grid redraw timer at 30fps
-    Grid_Metro = metro.init()
-    Grid_Metro.time = 1/30
-    Grid_Metro.event = function()
-        if Grid_Dirty then
+    grid_metro = metro.init()
+    grid_metro.time = 1/30
+    grid_metro.event = function()
+        if grid_dirty then
             grid_redraw()
-            Grid_Dirty = false
+            grid_dirty = false
         end
     end
-    Grid_Metro:start()
+    grid_metro:start()
 
     -- Fire-decay tick for LED flash on currently-firing cells (15fps)
-    Fire_Decay_Metro = metro.init()
-    Fire_Decay_Metro.time = 1/15
-    Fire_Decay_Metro.event = function()
+    fire_decay_metro = metro.init()
+    fire_decay_metro.time = 1/15
+    fire_decay_metro.event = function()
         for x = 1, 16 do
             for y = 2, 8, 2 do
                 if Sequencer.Fire_Decay[x][y] > 0 then
                     Sequencer.Fire_Decay[x][y] = Sequencer.Fire_Decay[x][y] - 1
-                    Grid_Dirty = true
+                    grid_dirty = true
                 end
             end
         end
     end
-    Fire_Decay_Metro:start()
+    fire_decay_metro:start()
 
     crow_reinit()
 
@@ -940,9 +944,9 @@ end
 function cleanup()
     Sequencer.stop_all_clocks()
     Roles.free_all()
-    if Screen_Metro then Screen_Metro:stop() end
-    if Grid_Metro then Grid_Metro:stop() end
-    if Fire_Decay_Metro then Fire_Decay_Metro:stop() end
-    G:all(0)
-    G:refresh()
+    if screen_metro then screen_metro:stop() end
+    if grid_metro then grid_metro:stop() end
+    if fire_decay_metro then fire_decay_metro:stop() end
+    g:all(0)
+    g:refresh()
 end
