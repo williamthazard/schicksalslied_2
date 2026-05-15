@@ -18,6 +18,7 @@ local Sequencer  = include 'lib/sequencer'
 local Roles      = include 'lib/cell_roles'
 local MusicUtil  = require 'musicutil'
 Midi_Role        = include 'lib/midi_role'
+local Grain      = include 'lib/grid_grain_params'
 
 -- ========================================================================
 -- GLOBAL STATE — text input + history
@@ -576,6 +577,32 @@ local function add_params()
         controlspec = controlspec.new(0.01, 5, 'exp', 0.001, 0.1, 's'),
     }
 
+    -- ────────────────────────────────────────────────────────────────────
+    -- GRANULAR DELAY GROUP (spec §6)
+    -- ────────────────────────────────────────────────────────────────────
+    Grain.add_params()
+    -- Master amps live in the granular_delay group too. Add them AFTER
+    -- Grain.add_params() so they appear at the top of the group (under the
+    -- 'master amps' separator that grid_grain_params.lua creates).
+    params:add{
+        type = 'control',
+        id = 'mic_to_delay_amp',
+        name = 'mic to delay amp',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
+    }
+    params:add{
+        type = 'control',
+        id = 'granular_out_amp',
+        name = 'granular out amp',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.3, ''),
+    }
+    params:add{
+        type = 'control',
+        id = 'mic_dry_amp',
+        name = 'mic dry amp',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
+    }
+
     -- Sampler file params (16 slots) — Sub-plan A's Lied loads via engine.sampler_load
     -- (NOTE: this block stays here for now; Task 5.2 will move them into a
     -- proper 'samplers' group with the full per-sampler param block.)
@@ -608,29 +635,6 @@ local function add_params()
             end,
         }
     end
-
-    -- (The existing add_params body used to have a global text_file param +
-    -- 3 row-8 amp params here. The text_file moved into the global group;
-    -- the 3 row-8 amps STAY here for now and Task 4.1 relocates them into
-    -- the granular_delay group.)
-    params:add{
-        type = 'control',
-        id = 'mic_to_delay_amp',
-        name = 'mic to delay amp',
-        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
-    }
-    params:add{
-        type = 'control',
-        id = 'granular_out_amp',
-        name = 'granular out amp',
-        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.3, ''),
-    }
-    params:add{
-        type = 'control',
-        id = 'mic_dry_amp',
-        name = 'mic dry amp',
-        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
-    }
 
 end
 
