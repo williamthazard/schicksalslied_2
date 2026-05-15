@@ -845,6 +845,7 @@ local function add_params()
         LiedLfos.bind_row_2_lfos()
         LiedLfos.bind_sampler_lfos()
         LiedLfos.bind_oneshot_lfos()
+        LiedLfos.bind_crow_lfos()
     end
 
 end

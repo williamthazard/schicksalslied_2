@@ -97,4 +97,14 @@ function LiedLfos.bind_oneshot_lfos()
 end
 -- 4 LFOs × 13 one-shots = 52 oneshot LFOs
 
+function LiedLfos.bind_crow_lfos()
+    LiedLfos.bind('wsyn_lpg_speed',     'wsyn_lpg_speed',    -5, 5)
+    LiedLfos.bind('wsyn_lpg_symmetry',  'wsyn_lpg_symmetry', -5, 5)
+    LiedLfos.bind('wsyn_fm_index',      'wsyn_fm_index',      0, 5)
+    LiedLfos.bind('wsyn_fm_envelope',   'wsyn_fm_envelope',  -5, 5)
+    LiedLfos.bind('wdel_feedback',      'wdel_feedback',      0, 1)
+    LiedLfos.bind('wdel_filter_cutoff', 'wdel_filter_cutoff', 0, 1)
+end
+-- 6 crow LFOs (skipping fm_num and fm_deno — those are int-typed params)
+
 return LiedLfos
