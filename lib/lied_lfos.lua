@@ -75,4 +75,26 @@ function LiedLfos.bind_row_2_lfos()
     end
 end
 
+function LiedLfos.bind_sampler_lfos()
+    for slot = 1, 16 do
+        local prefix = 'sampler_' .. slot .. '_'
+        LiedLfos.bind('sampler_' .. slot .. '_amp',       prefix .. 'amp',        0, 2)
+        LiedLfos.bind('sampler_' .. slot .. '_pan',       prefix .. 'pan',       -1, 1)
+        LiedLfos.bind('sampler_' .. slot .. '_cutoff',    prefix .. 'cutoff',    20, 18000)
+        LiedLfos.bind('sampler_' .. slot .. '_resonance', prefix .. 'resonance',  0, 4)
+    end
+end
+-- 4 LFOs × 16 samplers = 64 sampler LFOs
+
+function LiedLfos.bind_oneshot_lfos()
+    for slot = 1, 13 do
+        local prefix = 'oneshot_' .. slot .. '_'
+        LiedLfos.bind('oneshot_' .. slot .. '_amp',       prefix .. 'amp',        0, 2)
+        LiedLfos.bind('oneshot_' .. slot .. '_pan',       prefix .. 'pan',       -1, 1)
+        LiedLfos.bind('oneshot_' .. slot .. '_cutoff',    prefix .. 'cutoff',    20, 18000)
+        LiedLfos.bind('oneshot_' .. slot .. '_resonance', prefix .. 'resonance',  0, 4)
+    end
+end
+-- 4 LFOs × 13 one-shots = 52 oneshot LFOs
+
 return LiedLfos
