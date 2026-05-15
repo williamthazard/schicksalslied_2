@@ -108,6 +108,9 @@ Engine_Lied : CroneEngine {
         this.addCommand(\silence_all_oneshots, "", { arg msg;
             kernel.silenceAllOneShots;
         });
+        this.addCommand(\free_granular, "", { arg msg;
+            kernel.freeGranularChain;
+        });
 
         "Engine_Lied alloc complete.".postln;
     }

@@ -10,7 +10,7 @@ Routine({
     Server.default.options.sampleRate = 48000;
     // To hardcode the audio output device (e.g. when airpods auto-take-over
     // the macOS default and cause sample-rate distortion), uncomment and edit:
-    // Server.default.options.outDevice_("MacBook Pro Speakers");
+    Server.default.options.outDevice_("MacBook Air Speakers");
     "Booting SuperCollider server...".postln;
     Server.default.bootSync;
     if (Server.default.serverRunning.not) {
@@ -193,7 +193,10 @@ Server.default.sync;
     1.0.wait;
 
 "Test 14: granular chain allocation check (silent — verify nothing crashes)".postln;
-("  16 grain synths: " ++ kernel.grainSynths.size).postln;
+kernel.ensureGranularChain;
+server.sync;
+0.5.wait;
+("  8 grain synths: " ++ kernel.grainSynths.size).postln;
 ("  delayBuf frames: " ++ kernel.delayBuf.numFrames).postln;
 ("  micBus channels: " ++ kernel.micBus.numChannels).postln;
 "  All allocated, amp=0 (silent). Granular audio test next.".postln;

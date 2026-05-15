@@ -17,6 +17,7 @@ Lied {
     var <grainSynths;
     var <grainPanLFOs, <grainCutoffLFOs, <grainResLFOs;
     var <grainRates, <grainDurs, <grainDelays;
+    var <granularAllocated;
 
     *new { arg server;
         ^super.new.init(server);
@@ -191,38 +192,53 @@ Lied {
             [\inBus, dryBus],
             outGroup);
 
-        // -----------------------------------------------------------------
-        // Granular delay chain — allocated persistently
-        // -----------------------------------------------------------------
+        granularAllocated = false;
 
-        // Delay buffer: 512 beats long at initial tempo (beat_sec defaults to 0.5)
+        "Lied initialized.".postln;
+    }
+
+    setBeatSec { arg newBeatSec;
+        beat_sec = newBeatSec;
+        ("Lied: beat_sec = " ++ beat_sec).postln;
+    }
+
+    // -----------------------------------------------------------------
+    // Lazy granular chain allocation
+    // -----------------------------------------------------------------
+    // Called the first time any of mic_amp / mic_dry_amp / granular_out_amp
+    // is set to a non-zero value. Allocates the delay buffer, mic chain,
+    // recorder, fbPatchMix, and 8 grain synths (reduced from 16 for CPU).
+    // Idempotent — subsequent calls are no-ops once granularAllocated.
+
+    ensureGranularChain {
+        if (granularAllocated) { ^this };
+        "Lied: allocating granular chain (8 grains)...".postln;
+
+        // Buffer + buses
         delayBuf = Buffer.alloc(server, server.sampleRate * (beat_sec * 512), 1);
         micBus = Bus.audio(server, 1);
         ptrBus = Bus.audio(server, 1);
 
         server.sync;
 
-        // Granular group hierarchy: mic → ptr → rec → gran, before voiceGroup so
-        // mic input writes to delayBuf before voiceGroup's voices read from it.
-        // Voice groups remain head-of-chain for clean signal flow.
+        // Group hierarchy: mic → ptr → rec → gran, before voiceGroup
         micGrp  = Group.before(voiceGroup);
         ptrGrp  = Group.after(micGrp);
         recGrp  = Group.after(ptrGrp);
         granGrp = Group.after(recGrp);
 
-        // Persistent granular chain synths (default amp = 0; turned up by cell toggles)
+        // Persistent chain synths (default amp = 0)
         micSynth        = Synth(\liedMic,        [\in, 0, \out, micBus, \amp, 0],     micGrp);
         micDrySynth     = Synth(\liedMicDry,     [\in, 0, \out, dryBus, \amp, 0],     micGrp);
         fbPatchMixSynth = Synth(\liedFbPatchMix, [\in, 0, \out, micBus, \amp, 0],     micGrp, \addToHead);
         ptrSynth        = Synth(\liedPtr,        [\buf, delayBuf, \out, ptrBus],      ptrGrp);
         recSynth        = Synth(\liedRec,        [\ptrIn, ptrBus, \micIn, micBus, \buf, delayBuf], recGrp);
 
-        // Grain LFOs (16 each for pan, cutoff, resonance). Stored as Ndefs; the
-        // \rate.kr arg lets Sub-plan C wire params to these.
-        grainPanLFOs     = Array.fill(16, { 0 });
-        grainCutoffLFOs  = Array.fill(16, { 0 });
-        grainResLFOs     = Array.fill(16, { 0 });
-        16.do({ arg i;
+        // Grain LFOs (8 each)
+        grainPanLFOs    = Array.fill(8, { 0 });
+        grainCutoffLFOs = Array.fill(8, { 0 });
+        grainResLFOs    = Array.fill(8, { 0 });
+        8.do({ arg i;
             grainPanLFOs[i] = Ndef(
                 ("grainPan" ++ i).asSymbol,
                 { LFTri.kr(1 / (Rand(1, 64) * beat_sec)).range(-1, 1); }
@@ -237,12 +253,12 @@ Lied {
             );
         });
 
-        // Scrambled per-grain rates, durations, delays (carters-delay-norns idiom)
+        // Scrambled per-grain rates/durations/delays (8 grains)
         grainRates  = [1/4, 1/2, 1, 3/2, 2].scramble;
-        grainDurs   = 16.collect({ arg i; beat_sec * (i + 1); }).scramble;
-        grainDelays = 16.collect({ arg i; server.sampleRate * (beat_sec * (i + 1)) * 16; }).scramble;
+        grainDurs   = 8.collect({ arg i; beat_sec * (i + 1); }).scramble;
+        grainDelays = 8.collect({ arg i; server.sampleRate * (beat_sec * (i + 1)) * 16; }).scramble;
 
-        grainSynths = 16.collect({ arg n;
+        grainSynths = 8.collect({ arg n;
             Synth(\liedGran, [
                 \amp, 0,
                 \buf, delayBuf,
@@ -268,50 +284,86 @@ Lied {
             ], granGrp);
         });
 
+        granularAllocated = true;
         "Lied granular chain allocated.".postln;
-
-        "Lied initialized.".postln;
     }
 
-    setBeatSec { arg newBeatSec;
-        beat_sec = newBeatSec;
-        ("Lied: beat_sec = " ++ beat_sec).postln;
+    // -----------------------------------------------------------------
+    // Free the granular chain entirely (called from panic and from free)
+    // -----------------------------------------------------------------
+
+    freeGranularChain {
+        if (granularAllocated.not) { ^this };
+        "Lied: freeing granular chain...".postln;
+
+        grainPanLFOs.do({ arg lfo; lfo.free; });
+        grainCutoffLFOs.do({ arg lfo; lfo.free; });
+        grainResLFOs.do({ arg lfo; lfo.free; });
+        granGrp.free;
+        recGrp.free;
+        ptrGrp.free;
+        micGrp.free;
+        delayBuf.free;
+        micBus.free;
+        ptrBus.free;
+
+        grainSynths = nil;
+        grainPanLFOs = nil;
+        grainCutoffLFOs = nil;
+        grainResLFOs = nil;
+        micSynth = nil;
+        micDrySynth = nil;
+        ptrSynth = nil;
+        recSynth = nil;
+        fbPatchMixSynth = nil;
+        delayBuf = nil;
+        micBus = nil;
+        ptrBus = nil;
+        micGrp = nil;
+        ptrGrp = nil;
+        recGrp = nil;
+        granGrp = nil;
+
+        granularAllocated = false;
     }
 
     setMicAmp { arg amp;
-        micSynth.set(\amp, amp);
+        if (amp > 0) { this.ensureGranularChain };
+        if (granularAllocated) { micSynth.set(\amp, amp) };
     }
 
     setMicDryAmp { arg amp;
-        micDrySynth.set(\amp, amp);
+        if (amp > 0) { this.ensureGranularChain };
+        if (granularAllocated) { micDrySynth.set(\amp, amp) };
     }
 
     setGranularOutAmp { arg amp;
-        granGrp.set(\amp, amp);  // single OSC msg updates all 16 grain synths
+        if (amp > 0) { this.ensureGranularChain };
+        if (granularAllocated) { granGrp.set(\amp, amp) };
     }
 
     setFbPatchAmp { arg amp;
-        fbPatchMixSynth.set(\amp, amp);
+        if (granularAllocated) { fbPatchMixSynth.set(\amp, amp) };
     }
 
     setFbPatchBalance { arg balance;
-        fbPatchMixSynth.set(\balance, balance);
+        if (granularAllocated) { fbPatchMixSynth.set(\balance, balance) };
     }
 
     setFbPatchHpFreq { arg freq;
-        fbPatchMixSynth.set(\hpFreq, freq);
+        if (granularAllocated) { fbPatchMixSynth.set(\hpFreq, freq) };
     }
 
     setFbPatchNoiseLevel { arg lvl;
-        fbPatchMixSynth.set(\noiseLevel, lvl);
+        if (granularAllocated) { fbPatchMixSynth.set(\noiseLevel, lvl) };
     }
 
     setFbPatchSineLevel { arg lvl;
-        fbPatchMixSynth.set(\sineLevel, lvl);
+        if (granularAllocated) { fbPatchMixSynth.set(\sineLevel, lvl) };
     }
 
     setFbPatchSineHz { arg hz;
-        fbPatchMixSynth.set(\sineHz, hz);
+        if (granularAllocated) { fbPatchMixSynth.set(\sineHz, hz) };
     }
 
     // -----------------------------------------------------------------
@@ -486,17 +538,7 @@ Lied {
         ringerInstances.do { |inst| inst.free };
         samplerInstances.do { |inst| inst.free };
         oneShotInstances.do { |inst| inst.free };
-        // Granular delay state (freed before master FX so signal flow unwinds cleanly)
-        delayBuf.free;
-        micBus.free;
-        ptrBus.free;
-        grainPanLFOs.do({ arg lfo; lfo.free; });
-        grainCutoffLFOs.do({ arg lfo; lfo.free; });
-        grainResLFOs.do({ arg lfo; lfo.free; });
-        granGrp.free;
-        recGrp.free;
-        ptrGrp.free;
-        micGrp.free;
+        if (granularAllocated) { this.freeGranularChain };
         delaySynth.free;
         reverbSynth.free;
         outSynth.free;

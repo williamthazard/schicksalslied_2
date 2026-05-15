@@ -396,6 +396,9 @@ local function panic()
     engine.set_mic_dry_amp(0)
     engine.set_granular_out_amp(0)
     engine.set_fb_amp(0)
+    -- Fully free the granular chain (frees ~50-70% baseline CPU; user must
+    -- re-toggle row 8 col 14/15/16 to bring it back)
+    engine.free_granular()
     -- Hard-stop in-flight sampler and one-shot playback
     engine.silence_all_samplers()
     engine.silence_all_oneshots()
