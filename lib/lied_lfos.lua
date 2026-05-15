@@ -27,21 +27,21 @@ local LiedLfos = {}
 LiedLfos.bound = {}
 
 -- Bind an LFO that, when active, drives `target_param_id`.
--- Each LFO call adds 13 params (state, shape, depth, phase, offset, min, max,
--- baseline, mode, clocked rate, free rate, reset, reset_target) — auto-named
--- via lfo_<lfo_id>_* pattern by the library.
+-- LFO.new constructs the object (no params yet). lfo:add_params(id) is what
+-- actually registers the 15 params per LFO into the currently-open group.
 function LiedLfos.bind(lfo_id, target_param_id, min, max)
-    local lfo = LFO:add{
-        shape  = 'sine',
-        min    = min or 0,
-        max    = max or 1,
-        depth  = 0,
-        mode   = 'clocked',
-        period = 4,
-        action = function(scaled, raw)
+    local lfo = LFO.new(
+        'sine',           -- shape
+        min or 0,         -- min
+        max or 1,         -- max
+        0,                -- depth (start inert; user enables via lfo_<id> state param)
+        'clocked',        -- mode
+        4,                -- period
+        function(scaled, raw)
             params:set(target_param_id, scaled)
-        end,
-    }
+        end
+    )
+    lfo:add_params(lfo_id)
     LiedLfos.bound[lfo_id] = lfo
     return lfo
 end

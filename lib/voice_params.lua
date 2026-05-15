@@ -598,18 +598,16 @@ function VoiceParams.add_cell_seq_mode_block(x, y)
 end
 -- 14 params per cell: 1 mode + 1 scale + 1 fixed + 1 num_steps + 8 step durations + 2 random.
 
--- Default seq_mode index per cell (mirrors sequencer.lua's default_seq_mode_for)
+-- Default seq_mode index per cell.
+-- User-decision: all cells default to lied (option index 1) regardless of cell.
+-- This loses the naherinlied-specific per-column starting rates but gives a
+-- consistent byte-driven starting behavior across the grid. User can change
+-- individual cells via PARAMETERS, or trigger 'reset_all_seq_modes' to fire
+-- Sequencer.reset_all_seq_modes_to_default (which reads default_seq_mode_for
+-- in sequencer.lua — that's the in-memory fallback, no longer reachable via
+-- params:bang since all cells start at index 1).
 function VoiceParams._default_seq_mode_index(x, y)
-    if y == 2 then
-        if x == 1 or x == 2 then return 2  -- fixed
-        elseif x >= 3 and x <= 8 then return 1  -- sequins-derived
-        elseif x >= 9 and x <= 12 then return 3  -- user sequence
-        elseif x >= 13 and x <= 16 then return 2  -- fixed
-        end
-    elseif y == 4 or y == 6 then return 2  -- fixed
-    elseif y == 8 then return 4  -- random
-    end
-    return 2
+    return 1  -- lied
 end
 
 function VoiceParams._default_seq_scale(x, y)
