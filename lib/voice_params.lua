@@ -248,6 +248,9 @@ function VoiceParams.add_row2_cell_block(x)
         end,
     }
 
+    -- ── Seq mode + sub-params (14) — inline after role ──
+    VoiceParams.add_cell_seq_mode_block(x, 2)
+
     -- ── Shared params (TriSin + Ringer; bus routing is voice-only) ──
     params:add{
         type = 'control',

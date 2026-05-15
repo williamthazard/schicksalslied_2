@@ -395,7 +395,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- GLOBAL GROUP (spec §9)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('global', 'global', 8)
+    params:add_group('global', 'global', 9)
 
     params:add{
         type = 'file',
@@ -457,6 +457,26 @@ local function add_params()
         name = 'root note',
         options = { 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B' },
         default = 1,
+    }
+    params:add{
+        type = 'trigger',
+        id = 'reset_all_value_modes_to_lied',
+        name = 'reset all value modes to lied',
+        action = function()
+            -- Set every value_kind's mode to 1 (lied)
+            for y = 4, 6, 2 do
+                for x = 1, 15, 2 do
+                    params:set(string.format('cell_%d_%d_position_mode', x, y), 1)
+                    params:set(string.format('cell_%d_%d_duration_mode', x, y), 1)
+                end
+                for x = 2, 16, 2 do
+                    params:set(string.format('cell_%d_%d_rate_mode', x, y), 1)
+                end
+            end
+            for x = 1, 13 do
+                params:set(string.format('cell_%d_8_rate_mode', x), 1)
+            end
+        end,
     }
 
     -- ────────────────────────────────────────────────────────────────────
@@ -604,9 +624,10 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
-    -- ROW-2 CELLS GROUP (16 cells × 26 params + 1 separator/cell + 4 bulk = 436)
+    -- ROW-2 CELLS GROUP (16 cells × 41 params + 1 separator/cell + 4 bulk = 660)
+    -- Each cell: 1 separator + 1 role + 14 seq_mode + 6 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 41
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'synths', 16 * 27 + 4)
+    params:add_group('row_2_cells', 'synths', 16 * 41 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
@@ -653,62 +674,67 @@ local function add_params()
     end
 
     -- ────────────────────────────────────────────────────────────────────
-    -- CELL SEQ MODES GROUP (64 cells × 14 params + 1 separator/cell + 1 reset = 961)
+    -- LOOPING SAMPLERS GROUP
+    -- Each slot: 1 separator + 1 file + 9 voice + 1 trigger-cell sep + 14 trigger seq_mode
+    --            + 13 position value_mode + 13 duration value_mode
+    --            + 1 rate-cell sep + 14 rate seq_mode + 13 rate value_mode = 80
+    -- 16 slots × 80 + 4 bulk triggers = 1284
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('cell_seq_modes', 'cell seq modes', 64 * 15 + 1)
+    params:add_group('samplers', 'looping samplers', 16 * 80 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
-        for y = 2, 8, 2 do
-            for x = 1, 16 do
-                params:add_separator(string.format('seq_mode_cell_%d_%d_separator', x, y),
-                    string.format('cell %d-%d seq mode', x, y))
-                VoiceParams.add_cell_seq_mode_block(x, y)
+        for slot = 1, 16 do
+            local trigger_col, trigger_row, rate_col, rate_row
+            if slot <= 8 then
+                trigger_col = (slot * 2) - 1
+                trigger_row = 4
+                rate_col    = slot * 2
+                rate_row    = 4
+            else
+                trigger_col = ((slot - 8) * 2) - 1
+                trigger_row = 6
+                rate_col    = (slot - 8) * 2
+                rate_row    = 6
             end
+
+            params:add_separator('sampler_' .. slot .. '_separator', 'looping sampler ' .. slot)
+            params:add{
+                type = 'file',
+                id = 'sampler_' .. slot .. '_file',
+                name = 'looping sampler ' .. slot .. ' file',
+                action = function(path)
+                    if path == nil or path == '' or path == '-' then
+                        engine.sampler_clear(slot)
+                    else
+                        engine.sampler_load(slot, path)
+                    end
+                end,
+            }
+            VoiceParams.add_sampler_block(slot)  -- 9 voice params
+
+            params:add_separator(
+                string.format('sampler_%d_trigger_cell_separator', slot),
+                string.format('trigger cell (%d,%d)', trigger_col, trigger_row))
+            VoiceParams.add_cell_seq_mode_block(trigger_col, trigger_row)         -- 14
+            VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'position', 0, 0.9)   -- 13
+            VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'duration', 0.001, 0.1) -- 13
+
+            params:add_separator(
+                string.format('sampler_%d_rate_cell_separator', slot),
+                string.format('rate cell (%d,%d)', rate_col, rate_row))
+            VoiceParams.add_cell_seq_mode_block(rate_col, rate_row)               -- 14
+            VoiceParams.add_cell_value_mode_block(rate_col, rate_row, 'rate', -16, 16)            -- 13
         end
+
+        -- 4 bulk triggers
         params:add{
             type = 'trigger',
-            id = 'reset_all_seq_modes_to_default',
-            name = 'reset all seq modes',
-            action = function() Sequencer.reset_all_seq_modes_to_default() end,
+            id = 'samplers_randomize_all',
+            name = 'randomize all looping samplers',
+            action = function()
+                for slot = 1, 16 do VoiceParams.randomize_sampler(slot) end
+            end,
         }
-    end
-
-    -- ────────────────────────────────────────────────────────────────────
-    -- CELL VALUE MODES GROUP (sampler/oneshot cells only)
-    --   - Row 4/6 odd cols (sampler trigger, 16 cells): 1 sep + 2 kinds × 13 = 27/cell → 16×27 = 432
-    --   - Row 4/6 even cols (sampler rate, 16 cells): 1 sep + 13 = 14/cell → 16×14 = 224
-    --   - Row 8 cols 1-13 (one-shot, 13 cells): 1 sep + 13 = 14/cell → 13×14 = 182
-    --   - 5 bulk triggers
-    -- Total: 432 + 224 + 182 + 5 = 843
-    -- ────────────────────────────────────────────────────────────────────
-    params:add_group('cell_value_modes', 'cell value modes', 843)
-    do
-        local VoiceParams = include 'lib/voice_params'
-        -- Sampler trigger cells (rows 4/6, odd cols 1,3,5,7,9,11,13,15)
-        for y = 4, 6, 2 do
-            for x = 1, 15, 2 do
-                params:add_separator(string.format('value_mode_cell_%d_%d_separator', x, y),
-                    string.format('cell %d-%d', x, y))
-                VoiceParams.add_cell_value_mode_block(x, y, 'position', 0, 0.9)
-                VoiceParams.add_cell_value_mode_block(x, y, 'duration', 0.001, 0.1)
-            end
-        end
-        -- Sampler rate cells (rows 4/6, even cols 2,4,6,8,10,12,14,16)
-        for y = 4, 6, 2 do
-            for x = 2, 16, 2 do
-                params:add_separator(string.format('value_mode_cell_%d_%d_separator', x, y),
-                    string.format('cell %d-%d', x, y))
-                VoiceParams.add_cell_value_mode_block(x, y, 'rate', -16, 16)
-            end
-        end
-        -- One-shot cells (row 8, cols 1-13)
-        for x = 1, 13 do
-            params:add_separator(string.format('value_mode_cell_%d_8_separator', x),
-                string.format('cell %d-8', x))
-            VoiceParams.add_cell_value_mode_block(x, 8, 'rate', -16, 16)
-        end
-
-        -- 5 bulk-randomize triggers
         params:add{
             type = 'trigger',
             id = 'randomize_all_sampler_positions',
@@ -748,77 +774,14 @@ local function add_params()
                 end
             end,
         }
-        params:add{
-            type = 'trigger',
-            id = 'randomize_all_oneshot_rates',
-            name = 'randomize all one-shot rates',
-            action = function()
-                for x = 1, 13 do
-                    params:set(string.format('cell_%d_8_rate_fixed_value', x),
-                        -16 + math.random() * 32)
-                end
-            end,
-        }
-        params:add{
-            type = 'trigger',
-            id = 'reset_all_value_modes_to_lied',
-            name = 'reset all value modes to lied',
-            action = function()
-                for y = 4, 6, 2 do
-                    for x = 1, 15, 2 do
-                        params:set(string.format('cell_%d_%d_position_mode', x, y), 1)
-                        params:set(string.format('cell_%d_%d_duration_mode', x, y), 1)
-                    end
-                    for x = 2, 16, 2 do
-                        params:set(string.format('cell_%d_%d_rate_mode', x, y), 1)
-                    end
-                end
-                for x = 1, 13 do
-                    params:set(string.format('cell_%d_8_rate_mode', x), 1)
-                end
-            end,
-        }
     end
 
     -- ────────────────────────────────────────────────────────────────────
-    -- SAMPLERS GROUP (16 slots × 10 params + 1 separator/slot + 1 randomize-all = 177)
+    -- ONE-SHOT SAMPLERS GROUP
+    -- Each slot: 1 separator + 1 file + 9 voice + 14 seq_mode + 13 rate value_mode = 38
+    -- 13 slots × 38 + 2 bulk triggers = 496
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('samplers', 'looping samplers', 16 * 11 + 1)
-    do
-        local VoiceParams = include 'lib/voice_params'
-        for slot = 1, 16 do
-            params:add_separator('sampler_' .. slot .. '_separator', 'sampler ' .. slot)
-            -- File param (PSET-savable, triggers buffer load on path set)
-            params:add{
-                type = 'file',
-                id = 'sampler_' .. slot .. '_file',
-                name = 'sampler ' .. slot .. ' file',
-                action = function(path)
-                    if path == nil or path == '' or path == '-' then
-                        engine.sampler_clear(slot)
-                    else
-                        engine.sampler_load(slot, path)
-                    end
-                end,
-            }
-            -- 9 voice params from the helper
-            VoiceParams.add_sampler_block(slot)
-        end
-        params:add{
-            type = 'trigger',
-            id = 'samplers_randomize_all',
-            name = 'randomize all looping samplers',
-            action = function()
-                for slot = 1, 16 do
-                    VoiceParams.randomize_sampler(slot)
-                end
-            end,
-        }
-    end
-    -- ────────────────────────────────────────────────────────────────────
-    -- ONE-SHOT SAMPLERS GROUP (13 slots × 10 params + 1 separator/slot + 1 randomize-all = 144)
-    -- ────────────────────────────────────────────────────────────────────
-    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 11 + 1)
+    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 38 + 2)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 13 do
@@ -835,15 +798,28 @@ local function add_params()
                     end
                 end,
             }
-            VoiceParams.add_oneshot_block(slot)
+            VoiceParams.add_oneshot_block(slot)                               -- 9
+            VoiceParams.add_cell_seq_mode_block(slot, 8)                      -- 14
+            VoiceParams.add_cell_value_mode_block(slot, 8, 'rate', -16, 16)   -- 13
         end
+
+        -- 2 bulk triggers
         params:add{
             type = 'trigger',
             id = 'oneshots_randomize_all',
             name = 'randomize all one-shots',
             action = function()
-                for slot = 1, 13 do
-                    VoiceParams.randomize_oneshot(slot)
+                for slot = 1, 13 do VoiceParams.randomize_oneshot(slot) end
+            end,
+        }
+        params:add{
+            type = 'trigger',
+            id = 'randomize_all_oneshot_rates',
+            name = 'randomize all one-shot rates',
+            action = function()
+                for x = 1, 13 do
+                    params:set(string.format('cell_%d_8_rate_fixed_value', x),
+                        -16 + math.random() * 32)
                 end
             end,
         }
