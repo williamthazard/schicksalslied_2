@@ -536,4 +536,198 @@ function VoiceParams.randomize_row2_cell(x)
     end
 end
 
+-- ────────────────────────────────────────────────────────────────────────
+-- SEQ_MODE param block per cell (4-option mode + sub-params per mode)
+-- ────────────────────────────────────────────────────────────────────────
+
+local SEQ_MODE_OPTIONS = { 'sequins-derived', 'fixed', 'user sequence', 'random' }
+
+function VoiceParams.add_cell_seq_mode_block(x, y)
+    local prefix = 'cell_' .. x .. '_' .. y .. '_seq_'
+
+    params:add{
+        type = 'option',
+        id = prefix .. 'mode',
+        name = string.format('cell %d-%d seq mode', x, y),
+        options = SEQ_MODE_OPTIONS,
+        default = VoiceParams._default_seq_mode_index(x, y),
+        action = function(idx)
+            VoiceParams._update_seq_mode_visibility(x, y, idx)
+        end,
+    }
+    params:add{
+        type = 'control',
+        id = prefix .. 'scale',
+        name = 'scale',
+        controlspec = controlspec.new(0.01, 64, 'lin', 0.01,
+            VoiceParams._default_seq_scale(x, y), ''),
+    }
+    params:add{
+        type = 'control',
+        id = prefix .. 'fixed_value',
+        name = 'fixed value',
+        controlspec = controlspec.new(0.0625, 64, 'exp', 0.0001,
+            VoiceParams._default_fixed_value(x, y), 'beats'),
+    }
+    params:add{
+        type = 'number',
+        id = prefix .. 'num_steps',
+        name = 'num steps',
+        min = 1, max = 8, default = 4,
+    }
+    for s = 1, 8 do
+        params:add{
+            type = 'control',
+            id = prefix .. 'step_' .. s .. '_duration',
+            name = 'step ' .. s .. ' duration',
+            controlspec = controlspec.new(0.0625, 16, 'exp', 0.0001, 1, 'beats'),
+        }
+    end
+    params:add{
+        type = 'control',
+        id = prefix .. 'random_min',
+        name = 'random min',
+        controlspec = controlspec.new(0.0625, 16, 'exp', 0.0001, 1, 'beats'),
+    }
+    params:add{
+        type = 'control',
+        id = prefix .. 'random_max',
+        name = 'random max',
+        controlspec = controlspec.new(0.0625, 64, 'exp', 0.0001, 16, 'beats'),
+    }
+end
+-- 14 params per cell: 1 mode + 1 scale + 1 fixed + 1 num_steps + 8 step durations + 2 random.
+
+-- Default seq_mode index per cell (mirrors sequencer.lua's default_seq_mode_for)
+function VoiceParams._default_seq_mode_index(x, y)
+    if y == 2 then
+        if x == 1 or x == 2 then return 2  -- fixed
+        elseif x >= 3 and x <= 8 then return 1  -- sequins-derived
+        elseif x >= 9 and x <= 12 then return 3  -- user sequence
+        elseif x >= 13 and x <= 16 then return 2  -- fixed
+        end
+    elseif y == 4 or y == 6 then return 2  -- fixed
+    elseif y == 8 then return 4  -- random
+    end
+    return 2
+end
+
+function VoiceParams._default_seq_scale(x, y)
+    if y == 2 and x >= 3 and x <= 8 then return 8 end
+    return 1
+end
+
+function VoiceParams._default_fixed_value(x, y)
+    if y == 2 then
+        if x == 1 or x == 2 then return 8
+        elseif x == 13 then return 3
+        elseif x == 14 then return 1.5
+        elseif x == 15 then return 1
+        elseif x == 16 then return 0.5
+        end
+    elseif y == 4 or y == 6 then return 2 end
+    return 1
+end
+
+function VoiceParams._update_seq_mode_visibility(x, y, mode_idx)
+    local prefix = 'cell_' .. x .. '_' .. y .. '_seq_'
+    local sequins_params = { 'scale' }
+    local fixed_params = { 'fixed_value' }
+    local user_seq_params = { 'num_steps' }
+    for s = 1, 8 do
+        table.insert(user_seq_params, 'step_' .. s .. '_duration')
+    end
+    local random_params = { 'random_min', 'random_max' }
+
+    local function show_or_hide(list, show)
+        for _, p in ipairs(list) do
+            if show then params:show(prefix .. p)
+            else params:hide(prefix .. p) end
+        end
+    end
+    show_or_hide(sequins_params, mode_idx == 1)
+    show_or_hide(fixed_params, mode_idx == 2)
+    show_or_hide(user_seq_params, mode_idx == 3)
+    show_or_hide(random_params, mode_idx == 4)
+    _menu.rebuild_params()
+end
+
+-- ────────────────────────────────────────────────────────────────────────
+-- VALUE_MODE param block per cell per value_kind ('position'|'duration'|'rate')
+-- ────────────────────────────────────────────────────────────────────────
+
+local VALUE_MODE_OPTIONS = { 'lied', 'fixed', 'user sequence', 'random' }
+
+function VoiceParams.add_cell_value_mode_block(x, y, value_kind, range_lo, range_hi)
+    local prefix = 'cell_' .. x .. '_' .. y .. '_' .. value_kind .. '_'
+
+    params:add{
+        type = 'option',
+        id = prefix .. 'mode',
+        name = string.format('cell %d-%d %s mode', x, y, value_kind),
+        options = VALUE_MODE_OPTIONS,
+        default = 1,
+        action = function(idx)
+            VoiceParams._update_value_mode_visibility(x, y, value_kind, idx)
+        end,
+    }
+    local cs = controlspec.new(range_lo, range_hi, 'lin', (range_hi - range_lo) / 100,
+        (range_lo + range_hi) / 2, '')
+    params:add{
+        type = 'control',
+        id = prefix .. 'fixed_value',
+        name = 'fixed value',
+        controlspec = cs,
+    }
+    params:add{
+        type = 'number',
+        id = prefix .. 'num_steps',
+        name = 'num steps',
+        min = 1, max = 8, default = 4,
+    }
+    for s = 1, 8 do
+        params:add{
+            type = 'control',
+            id = prefix .. 'step_' .. s .. '_value',
+            name = 'step ' .. s .. ' value',
+            controlspec = cs,
+        }
+    end
+    params:add{
+        type = 'control',
+        id = prefix .. 'random_min',
+        name = 'random min',
+        controlspec = cs,
+    }
+    params:add{
+        type = 'control',
+        id = prefix .. 'random_max',
+        name = 'random max',
+        controlspec = cs,
+    }
+end
+-- 13 params per (cell × value_kind): 1 mode + 1 fixed + 1 num_steps + 8 step values + 2 random.
+
+function VoiceParams._update_value_mode_visibility(x, y, value_kind, mode_idx)
+    local prefix = 'cell_' .. x .. '_' .. y .. '_' .. value_kind .. '_'
+    local fixed_params = { 'fixed_value' }
+    local user_seq_params = { 'num_steps' }
+    for s = 1, 8 do
+        table.insert(user_seq_params, 'step_' .. s .. '_value')
+    end
+    local random_params = { 'random_min', 'random_max' }
+
+    local function show_or_hide(list, show)
+        for _, p in ipairs(list) do
+            if show then params:show(prefix .. p)
+            else params:hide(prefix .. p) end
+        end
+    end
+    -- mode 1 (lied) hides all sub-params
+    show_or_hide(fixed_params, mode_idx == 2)
+    show_or_hide(user_seq_params, mode_idx == 3)
+    show_or_hide(random_params, mode_idx == 4)
+    _menu.rebuild_params()
+end
+
 return VoiceParams
