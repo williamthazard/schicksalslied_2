@@ -48,7 +48,7 @@ end
 -- seq is the cell's sequins-byte-reader function.
 function Midi.dispatch(x, y, seq)
     if Midi.device == nil then return end
-    local Roles = require 'lib/cell_roles'
+    local Roles = include 'lib/cell_roles'
     local cell_id = string.format("%d_%d", x, y)
     local channel = params:get('cell_' .. x .. '_2_midi_channel') or 1
     local note = Roles.quantize_note(seq() % 32 + 49)  -- MIDI 49..80, scale-snapped

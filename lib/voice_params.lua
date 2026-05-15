@@ -75,7 +75,7 @@ function VoiceParams.add_sampler_block(slot)
         name = 'sampler ' .. slot .. ' polyphony',
         min = 1, max = 8, default = 1,
         action = function(v)
-            local Roles = require 'lib/cell_roles'
+            local Roles = include 'lib/cell_roles'
             -- Sampler slot N pairs with trigger cell:
             --   slot 1..8 → cell (2N-1, 4)
             --   slot 9..16 → cell (2(N-8)-1, 6)
@@ -170,7 +170,7 @@ function VoiceParams.add_oneshot_block(slot)
         name = 'one-shot ' .. slot .. ' polyphony',
         min = 1, max = 8, default = 1,
         action = function(v)
-            local Roles = require 'lib/cell_roles'
+            local Roles = include 'lib/cell_roles'
             local cell_id = string.format("%d_%d", slot, 8)
             Roles.polyphony[cell_id] = v
         end,
@@ -202,7 +202,7 @@ end
 
 -- Granular randomize (called from Global_Randomize)
 function VoiceParams.randomize_granular()
-    local Grain = require 'lib/grid_grain_params'
+    local Grain = include 'lib/grid_grain_params'
     Grain.randomize_all_rates()
 end
 
@@ -232,7 +232,7 @@ function VoiceParams.add_row2_cell_block(x)
         default = VoiceParams._default_role_index(x),
         action = function(role_idx)
             local role = ROLE_NAMES[role_idx]
-            local Roles = require 'lib/cell_roles'
+            local Roles = include 'lib/cell_roles'
             Roles.cell_role[x] = role
             -- Free previously-allocated SC instance if any
             local prev_alloc = Roles.allocated[cell_id]
@@ -283,7 +283,7 @@ function VoiceParams.add_row2_cell_block(x)
         name = 'cell ' .. x .. ' polyphony',
         min = 1, max = 8, default = 4,
         action = function(v)
-            local Roles = require 'lib/cell_roles'
+            local Roles = include 'lib/cell_roles'
             Roles.polyphony[cell_id] = v
         end,
     }
@@ -434,7 +434,7 @@ function VoiceParams.add_row2_cell_block(x)
         name = 'cell ' .. x .. ' midi channel',
         min = 1, max = 16, default = 1,
         action = function(_)
-            local Midi = require 'lib/midi_role'
+            local Midi = include 'lib/midi_role'
             Midi.on_channel_change(x, 2)
         end,
     }
@@ -450,7 +450,7 @@ end
 
 -- Default role per column (mirrors lib/cell_roles.lua ROW_2_DEFAULTS)
 function VoiceParams._default_role_index(x)
-    local Roles = require 'lib/cell_roles'
+    local Roles = include 'lib/cell_roles'
     local role_name = Roles.ROW_2_DEFAULTS[x] or 'TriSin'
     for i, name in ipairs(ROLE_NAMES) do
         if name == role_name then return i end

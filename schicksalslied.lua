@@ -395,7 +395,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- GLOBAL GROUP (spec §9)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('global', 8)
+    params:add_group('global', 'global', 8)
 
     params:add{
         type = 'file',
@@ -462,7 +462,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- CROW GROUP (spec §8)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('crow', 10)
+    params:add_group('crow', 'crow', 10)
 
     params:add{
         type = 'trigger',
@@ -541,7 +541,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- MIDI GROUP (spec §3 — MIDI role; patterned on tehn/awake.lua)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('midi', 3)
+    params:add_group('midi', 'midi', 3)
 
     -- Device list built dynamically from midi.vports — option indices match
     -- vport numbers, so params:get returns a value usable directly with
@@ -606,9 +606,9 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- ROW-2 CELLS GROUP (16 cells × 26 params + 4 bulk triggers = 420)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 16 * 26 + 4)
+    params:add_group('row_2_cells', 'row-2 cells', 16 * 26 + 4)
     do
-        local VoiceParams = require 'lib/voice_params'
+        local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
             VoiceParams.add_row2_cell_block(x)
         end
@@ -654,9 +654,9 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- CELL SEQ MODES GROUP (64 cells × 14 params + 1 reset trigger = 897)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('cell_seq_modes', 64 * 14 + 1)
+    params:add_group('cell_seq_modes', 'cell seq modes', 64 * 14 + 1)
     do
-        local VoiceParams = require 'lib/voice_params'
+        local VoiceParams = include 'lib/voice_params'
         for y = 2, 8, 2 do
             for x = 1, 16 do
                 VoiceParams.add_cell_seq_mode_block(x, y)
@@ -677,9 +677,9 @@ local function add_params()
     --   - Row 8 cols 1-13 (one-shot, 13 cells): 13/cell
     -- Total: 16×26 + 16×13 + 13×13 = 416 + 208 + 169 = 793 + 5 bulk = 798
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('cell_value_modes', 793 + 5)
+    params:add_group('cell_value_modes', 'cell value modes', 793 + 5)
     do
-        local VoiceParams = require 'lib/voice_params'
+        local VoiceParams = include 'lib/voice_params'
         -- Sampler trigger cells (rows 4/6, odd cols 1,3,5,7,9,11,13,15)
         for y = 4, 6, 2 do
             for x = 1, 15, 2 do
@@ -773,9 +773,9 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- SAMPLERS GROUP (16 slots × 10 params + 1 randomize-all = 161)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('samplers', 16 * 10 + 1)
+    params:add_group('samplers', 'samplers', 16 * 10 + 1)
     do
-        local VoiceParams = require 'lib/voice_params'
+        local VoiceParams = include 'lib/voice_params'
         for slot = 1, 16 do
             -- File param (PSET-savable, triggers buffer load on path set)
             params:add{
@@ -807,9 +807,9 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- ONE-SHOT SAMPLERS GROUP (13 slots × 10 params + 1 randomize-all = 131)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('one_shot_samplers', 13 * 10 + 1)
+    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 10 + 1)
     do
-        local VoiceParams = require 'lib/voice_params'
+        local VoiceParams = include 'lib/voice_params'
         for slot = 1, 13 do
             params:add{
                 type = 'file',
@@ -841,7 +841,7 @@ local function add_params()
     -- LFOs (auto-grouped by the lfo library)
     -- ────────────────────────────────────────────────────────────────────
     do
-        local LiedLfos = require 'lib/lied_lfos'
+        local LiedLfos = include 'lib/lied_lfos'
         LiedLfos.bind_row_2_lfos()
         LiedLfos.bind_sampler_lfos()
         LiedLfos.bind_oneshot_lfos()

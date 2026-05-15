@@ -17,7 +17,7 @@ local Grain = {}
 --   - 1 randomize-all trigger
 -- Total: 4 + 3 + 3 + 3 + 24 + 1 = 38
 function Grain.add_params()
-    params:add_group('granular_delay', 38)
+    params:add_group('granular_delay', 'granular delay', 38)
 
     params:add_separator('master_amps_separator', 'master amps')
     -- The 3 master amps are added by schicksalslied.lua's add_params right
