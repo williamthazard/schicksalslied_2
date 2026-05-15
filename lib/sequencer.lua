@@ -326,4 +326,13 @@ function Sequencer.get_value(x, y, value_kind)
     return nil
 end
 
+-- Reset every cell's Seq_Mode to its naherinlied-derived default.
+-- Called from the global "reset all seq modes" params trigger.
+function Sequencer.reset_all_seq_modes_to_default()
+    Sequencer._init_seq_modes()  -- repopulates Seq_Mode using default_seq_mode_for
+    -- Then push values back to the params menu (Sub-plan C adds per-cell
+    -- params; this no-ops until those exist).
+    print('Sequencer: all seq modes reset to default')
+end
+
 return Sequencer

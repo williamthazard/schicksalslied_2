@@ -92,82 +92,6 @@ local function load_text_file(path)
 end
 
 -- ========================================================================
--- PARAMS (minimal set — Sub-plan C wires the full menu)
--- ========================================================================
-local function add_params()
-    -- Crow setup
-    params:add{
-        type = 'trigger',
-        id = 'reinit_crow',
-        name = 're-init crow modules',
-        action = crow_reinit,
-    }
-    params:add{
-        type = 'control',
-        id = 'wsyn_voices',
-        name = 'w/syn voices',
-        controlspec = controlspec.new(1, 4, 'lin', 1, 4, ''),
-        action = function(v) crow.ii.wsyn.voices(v) end,
-    }
-    -- Sampler file params (16 slots) — Sub-plan A's Lied loads via engine.sampler_load
-    for slot = 1, 16 do
-        params:add{
-            type = 'file',
-            id = 'sampler_' .. slot .. '_file',
-            name = 'sampler ' .. slot,
-            action = function(path)
-                if path == nil or path == '' or path == '-' then
-                    engine.sampler_clear(slot)
-                else
-                    engine.sampler_load(slot, path)
-                end
-            end,
-        }
-    end
-    -- One-shot file params (13 slots)
-    for slot = 1, 13 do
-        params:add{
-            type = 'file',
-            id = 'oneshot_' .. slot .. '_file',
-            name = 'one-shot ' .. slot,
-            action = function(path)
-                if path == nil or path == '' or path == '-' then
-                    engine.oneshot_clear(slot)
-                else
-                    engine.oneshot_load(slot, path)
-                end
-            end,
-        }
-    end
-    -- Text file load
-    params:add{
-        type = 'file',
-        id = 'text_file',
-        name = 'text file',
-        action = load_text_file,
-    }
-    -- Row 8 cols 14-16 "on amp" defaults
-    params:add{
-        type = 'control',
-        id = 'mic_to_delay_amp',
-        name = 'mic to delay amp',
-        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
-    }
-    params:add{
-        type = 'control',
-        id = 'granular_out_amp',
-        name = 'granular out amp',
-        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.3, ''),
-    }
-    params:add{
-        type = 'control',
-        id = 'mic_dry_amp',
-        name = 'mic dry amp',
-        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
-    }
-end
-
--- ========================================================================
 -- KEYBOARD HANDLER (spec §11 — two-variable text input model)
 -- ========================================================================
 
@@ -434,6 +358,174 @@ end
 
 function enc(n, d)
     -- Reserved for future use; no encoder actions in Sub-plan B
+end
+
+-- ========================================================================
+-- GLOBAL RANDOMIZE
+-- ========================================================================
+-- Triggered by the global_randomize param. Iterates every cell + sampler +
+-- one-shot + granular param and randomizes within reasonable bounds.
+-- The per-family randomize functions are defined in lib/voice_params (added
+-- in Sub-plan C Task 5.1). Until that module exists, this function calls
+-- functions that don't yet exist — calling Global_Randomize will fail at
+-- runtime until those tasks complete. (Wiring the param now keeps the menu
+-- structure stable; the action callback gracefully fails until then.)
+function Global_Randomize()
+    local ok, VoiceParams = pcall(require, 'lib/voice_params')
+    if not ok then
+        print('Global_Randomize: lib/voice_params not yet present, skipping')
+        return
+    end
+    for x = 1, 16 do VoiceParams.randomize_row2_cell(x) end
+    for slot = 1, 16 do VoiceParams.randomize_sampler(slot) end
+    for slot = 1, 13 do VoiceParams.randomize_oneshot(slot) end
+    VoiceParams.randomize_granular()
+    print('GLOBAL RANDOMIZE: applied')
+end
+
+-- ========================================================================
+-- PARAMS (Sub-plan C global group + full menu)
+-- ========================================================================
+local function add_params()
+    -- ────────────────────────────────────────────────────────────────────
+    -- GLOBAL GROUP (spec §9)
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('global', 8)
+
+    params:add{
+        type = 'file',
+        id = 'text_file',
+        name = 'text file',
+        action = load_text_file,
+    }
+    params:add{
+        type = 'trigger',
+        id = 'panic',
+        name = 'panic',
+        action = panic,
+    }
+    params:add{
+        type = 'trigger',
+        id = 'pause_resume',
+        name = 'pause / resume',
+        action = function() Sequencer.toggle_pause(); Grid_Dirty = true; end,
+    }
+    params:add{
+        type = 'trigger',
+        id = 'tap_tempo_param',
+        name = 'tap tempo',
+        action = tap_tempo,
+    }
+    params:add{
+        type = 'trigger',
+        id = 'global_randomize',
+        name = 'global randomize',
+        action = function() Global_Randomize() end,
+    }
+    params:add{
+        type = 'trigger',
+        id = 'reset_all_seq_modes',
+        name = 'reset all seq modes',
+        action = function() Sequencer.reset_all_seq_modes_to_default() end,
+    }
+    -- Scale + root for quantizing pitched dispatchers (TriSin, Ringer, crow,
+    -- JF, w/syn, w/del, MIDI). Default = chromatic + C = no quantization,
+    -- matching schicksalslied 1.x's historical behavior. Built dynamically
+    -- from MusicUtil.SCALES; index 1 is the special 'chromatic' (pass-through).
+    -- The Roles.quantize_note helper lands in Task 2.4.
+    params:add{
+        type = 'option',
+        id = 'scale_mode',
+        name = 'scale',
+        options = (function()
+            local list = { 'chromatic' }
+            for i = 1, #MusicUtil.SCALES do
+                table.insert(list, MusicUtil.SCALES[i].name)
+            end
+            return list
+        end)(),
+        default = 1,
+    }
+    params:add{
+        type = 'option',
+        id = 'root_note',
+        name = 'root note',
+        options = { 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B' },
+        default = 1,
+    }
+
+    -- Sampler file params (16 slots) — Sub-plan A's Lied loads via engine.sampler_load
+    -- (NOTE: this block stays here for now; Task 5.2 will move them into a
+    -- proper 'samplers' group with the full per-sampler param block.)
+    for slot = 1, 16 do
+        params:add{
+            type = 'file',
+            id = 'sampler_' .. slot .. '_file',
+            name = 'sampler ' .. slot,
+            action = function(path)
+                if path == nil or path == '' or path == '-' then
+                    engine.sampler_clear(slot)
+                else
+                    engine.sampler_load(slot, path)
+                end
+            end,
+        }
+    end
+    -- One-shot file params (13 slots) — same note: Task 5.3 relocates these.
+    for slot = 1, 13 do
+        params:add{
+            type = 'file',
+            id = 'oneshot_' .. slot .. '_file',
+            name = 'one-shot ' .. slot,
+            action = function(path)
+                if path == nil or path == '' or path == '-' then
+                    engine.oneshot_clear(slot)
+                else
+                    engine.oneshot_load(slot, path)
+                end
+            end,
+        }
+    end
+
+    -- (The existing add_params body used to have a global text_file param +
+    -- 3 row-8 amp params here. The text_file moved into the global group;
+    -- the 3 row-8 amps STAY here for now and Task 4.1 relocates them into
+    -- the granular_delay group.)
+    params:add{
+        type = 'control',
+        id = 'mic_to_delay_amp',
+        name = 'mic to delay amp',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
+    }
+    params:add{
+        type = 'control',
+        id = 'granular_out_amp',
+        name = 'granular out amp',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.3, ''),
+    }
+    params:add{
+        type = 'control',
+        id = 'mic_dry_amp',
+        name = 'mic dry amp',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
+    }
+
+    -- The existing standalone reinit_crow + wsyn_voices params are deferred
+    -- to Task 3.1 (where they move into the crow group). For now, retain
+    -- them inline so existing functionality keeps working between tasks.
+    params:add{
+        type = 'trigger',
+        id = 'reinit_crow',
+        name = 're-init crow modules',
+        action = crow_reinit,
+    }
+    params:add{
+        type = 'control',
+        id = 'wsyn_voices',
+        name = 'w/syn voices',
+        controlspec = controlspec.new(1, 4, 'lin', 1, 4, ''),
+        action = function(v) crow.ii.wsyn.voices(v) end,
+    }
 end
 
 -- ========================================================================
