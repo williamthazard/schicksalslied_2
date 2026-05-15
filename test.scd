@@ -7,6 +7,10 @@ Routine({
     var kernel, testSynth;
 
     Server.default.options.numInputBusChannels = 0;
+    Server.default.options.sampleRate = 48000;
+    // To hardcode the audio output device (e.g. when airpods auto-take-over
+    // the macOS default and cause sample-rate distortion), uncomment and edit:
+    // Server.default.options.outDevice_("MacBook Pro Speakers");
     "Booting SuperCollider server...".postln;
     Server.default.bootSync;
     if (Server.default.serverRunning.not) {

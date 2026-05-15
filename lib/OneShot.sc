@@ -130,6 +130,21 @@ OneShot {
         });
     }
 
+    // Free all voice sub-groups and recreate them empty.
+    // Used by Lied.silenceAllOneShots for post-K1-panic recovery: the
+    // freshly-created sub-groups are unregistered with NodeWatcher so
+    // `singleVoices[voiceKey].isPlaying` returns false on next trigger,
+    // forcing the fresh-allocate branch and a new Synth.
+    resetVoices {
+        var s = Server.default;
+        voiceKeys.do({ arg voiceKey;
+            if (singleVoices[voiceKey].notNil) {
+                singleVoices[voiceKey].free;
+            };
+            singleVoices[voiceKey] = Group.new(voiceGroup);
+        });
+    }
+
     free {
         voiceGroup.free;
     }

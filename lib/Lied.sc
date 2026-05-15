@@ -471,17 +471,13 @@ Lied {
 
     silenceAllSamplers {
         samplerInstances.do({ |inst|
-            if (inst.notNil) {
-                inst.singleVoices.do({ |sg| sg.freeAll });
-            };
+            if (inst.notNil) { inst.resetVoices };
         });
     }
 
     silenceAllOneShots {
         oneShotInstances.do({ |inst|
-            if (inst.notNil) {
-                inst.singleVoices.do({ |sg| sg.freeAll });
-            };
+            if (inst.notNil) { inst.resetVoices };
         });
     }
 
