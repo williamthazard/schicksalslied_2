@@ -54,4 +54,25 @@ function LiedLfos.bind_batch(config)
     end
 end
 
+-- TriSin has many LFO-able params, Ringer has a few. Per spec §10, we bind
+-- shared amp+pan once (works for both classes), plus TriSin-specific and
+-- Ringer-specific. 10 LFOs per cell × 16 cells = 160 LFOs.
+-- The library adds ~13 params per LFO; total ~2080 LFO params added by this
+-- function.
+function LiedLfos.bind_row_2_lfos()
+    for x = 1, 16 do
+        local prefix = 'cell_' .. x .. '_2_'
+        LiedLfos.bind('cell_' .. x .. '_amp',         prefix .. 'amp',         0, 2)
+        LiedLfos.bind('cell_' .. x .. '_pan',         prefix .. 'pan',        -1, 1)
+        LiedLfos.bind('cell_' .. x .. '_attack',      prefix .. 'attack',      0, 5)
+        LiedLfos.bind('cell_' .. x .. '_release',     prefix .. 'release',     0, 10)
+        LiedLfos.bind('cell_' .. x .. '_cutoff',      prefix .. 'cutoff',     20, 18000)
+        LiedLfos.bind('cell_' .. x .. '_resonance',   prefix .. 'resonance',   0, 4)
+        LiedLfos.bind('cell_' .. x .. '_fm_index',    prefix .. 'fm_index',    0, 20)
+        LiedLfos.bind('cell_' .. x .. '_fm_cratio',   prefix .. 'fm_carrier_ratio', 0.1, 16)
+        LiedLfos.bind('cell_' .. x .. '_fm_mratio',   prefix .. 'fm_modulator_ratio', 0.1, 16)
+        LiedLfos.bind('cell_' .. x .. '_decay',       prefix .. 'decay',     0.1, 20)
+    end
+end
+
 return LiedLfos

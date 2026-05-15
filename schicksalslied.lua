@@ -837,6 +837,14 @@ local function add_params()
         }
     end
 
+    -- ────────────────────────────────────────────────────────────────────
+    -- LFOs (auto-grouped by the lfo library)
+    -- ────────────────────────────────────────────────────────────────────
+    do
+        local LiedLfos = require 'lib/lied_lfos'
+        LiedLfos.bind_row_2_lfos()
+    end
+
 end
 
 -- ========================================================================
