@@ -56,6 +56,7 @@ Tap_Tempo_Times  = {}
 -- ========================================================================
 function crow_reinit()
     crow.input[1].mode('clock')
+    crow.ii.pullup(true)
     crow.ii.jf.mode(1)
     crow.ii.jf.run_mode(1)
     crow.ii.jf.tick(clock.get_tempo())
