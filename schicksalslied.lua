@@ -850,28 +850,15 @@ local function add_params()
     end
 
     -- ────────────────────────────────────────────────────────────────────
-    -- LFOs GROUP — wraps all 282 LFOs added by lib/lied_lfos.
-    -- Per-LFO param count verified by reading lfo.lua on disk:
-    --   15 params per LFO (lfo_state, shape, depth, phase, offset, scaled,
-    --   raw, min, max, baseline, mode, clocked, free, reset, reset_target).
-    --   Note: lfo.lua declares `params_per_entry = 14` internally but that
-    --   constant predates the addition of lfo_phase; actual count is 15.
-    -- Category separators (4) enable K3 navigation across LFO categories.
-    -- Total: (160 + 64 + 52 + 6) × 15 + 4 = 282 × 15 + 4 = 4234
+    -- LFOs — 4 separate top-level groups (one per category) so Norns's UI
+    -- doesn't freeze when scrolling through 4000+ entries in a single group.
     -- ────────────────────────────────────────────────────────────────────
     do
         local LiedLfos = include 'lib/lied_lfos'
-        local per_lfo = 15  -- params added by each LFO (verified from lfo.lua)
-        local total = (160 + 64 + 52 + 6) * per_lfo + 4  -- + 4 separators
-        params:add_group('lfos', 'LFOs', total)
-        params:add_separator('lfos_row_2_separator', 'row 2 voice LFOs')
-        LiedLfos.bind_row_2_lfos()
-        params:add_separator('lfos_sampler_separator', 'sampler LFOs')
-        LiedLfos.bind_sampler_lfos()
-        params:add_separator('lfos_oneshot_separator', 'one-shot LFOs')
-        LiedLfos.bind_oneshot_lfos()
-        params:add_separator('lfos_crow_separator', 'crow LFOs')
-        LiedLfos.bind_crow_lfos()
+        LiedLfos.add_row_2_lfos_group()
+        LiedLfos.add_sampler_lfos_group()
+        LiedLfos.add_oneshot_lfos_group()
+        LiedLfos.add_crow_lfos_group()
     end
 
 end

@@ -558,7 +558,7 @@ function VoiceParams.add_cell_seq_mode_block(x, y)
     params:add{
         type = 'control',
         id = prefix .. 'scale',
-        name = 'scale',
+        name = 'rate scale',
         controlspec = controlspec.new(0.01, 64, 'lin', 0.01,
             VoiceParams._default_seq_scale(x, y), ''),
     }
