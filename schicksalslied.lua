@@ -404,6 +404,17 @@ local function panic()
     engine.silence_all_oneshots()
     -- Stop crow / JF
     crow.ii.jf.run(0)
+    -- Stop w/tape playback explicitly
+    crow.ii.wtape.play(0)
+    -- Zero crow CV outputs (1..4) to halt any in-flight envelope-driven CVs.
+    -- AR envelopes already release naturally; this guarantees the final value.
+    for n = 1, 4 do
+        crow.output[n].volts = 0
+    end
+    -- MIDI all-notes-off is added in Task 3.2 once lib/midi_role.lua exists.
+    -- Note: w/syn and w/del don't expose direct silence verbs. Their voices
+    -- decay naturally via internal envelopes. Clearing Toggled (above) is
+    -- the main mitigation — no new triggers will reach them.
     -- Mark grid dirty so the LEDs reflect the now-cleared toggle state
     Grid_Dirty = true
     print('PANIC: silenced everything')
