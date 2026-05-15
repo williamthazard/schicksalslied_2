@@ -168,6 +168,20 @@ TriSin {
         });
     }
 
+    // Free all running Synths in voice subgroups + update voiceParams[*][\bus]
+    // so the next trigger allocates fresh with the new output bus. Needed
+    // because Out.ar samples \bus at construction; .set on a running synth
+    // updates the control value but doesn't reroute audio.
+    reroute {
+        arg busVal;
+        voiceKeys.do({ arg vK;
+            voiceParams[vK][\bus] = busVal;
+            if (singleVoices[vK].notNil) {
+                singleVoices[vK].freeAll;
+            };
+        });
+    }
+
     freeAllNotes {
         voiceGroup.freeAll;
     }

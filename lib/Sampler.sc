@@ -179,6 +179,20 @@ Sampler {
         });
     }
 
+    // Free all running Synths in voice subgroups + update voiceParams[*][\bus]
+    // so the next trigger allocates fresh with the new output bus. Needed
+    // because Out.ar samples \bus at construction; .set on a running synth
+    // updates the control value but doesn't reroute audio.
+    reroute {
+        arg busVal;
+        voiceKeys.do({ arg vK;
+            voiceParams[vK][\bus] = busVal;
+            if (singleVoices[vK].notNil) {
+                singleVoices[vK].freeAll;
+            };
+        });
+    }
+
     // Free all voice sub-groups and recreate them empty.
     // Used by Lied.silenceAllSamplers for post-K1-panic recovery: the
     // freshly-created sub-groups are unregistered with NodeWatcher so
