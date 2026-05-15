@@ -238,30 +238,69 @@ function Sequencer._init_seq_modes()
 end
 
 -- Compute the rate for cell [x][y]'s next tick based on its current seq_mode.
+-- Reads live from params (Sub-plan C wired the params; until they're added,
+-- falls back to the in-memory Seq_Mode table populated by _init_seq_modes).
 function Sequencer.get_rate(x, y)
-    local sm = Sequencer.Seq_Mode[x] and Sequencer.Seq_Mode[x][y]
-    if sm == nil then return 1 end  -- safe default if cell has no mode
+    local prefix = 'cell_' .. x .. '_' .. y .. '_seq_'
+    local mode_param_id = prefix .. 'mode'
 
-    if sm.mode == 'fixed' then
-        return sm.fixed_value or 1
-    elseif sm.mode == 'sequins' then
+    -- If params haven't been added yet (early-boot / pre-Sub-plan-C),
+    -- fall back to the in-memory Seq_Mode table.
+    if params.lookup[mode_param_id] == nil then
+        local sm = Sequencer.Seq_Mode[x] and Sequencer.Seq_Mode[x][y]
+        if sm == nil then return 1 end
+        if sm.mode == 'fixed' then return sm.fixed_value or 1
+        elseif sm.mode == 'sequins' then
+            local seq = Sequencer.Seq[x][y]
+            local num = seq()
+            local den = seq()
+            local scale = sm.scale or 1
+            if den == 0 then return scale end
+            return (num / den) * scale
+        elseif sm.mode == 'user_seq' then
+            local pat = Sequencer.User_Seq_Patterns[sm.pattern_index or 1]
+            if pat then return pat() end
+            return 1
+        elseif sm.mode == 'random' then
+            return math.random(sm.random_min or 1, sm.random_max or 16)
+        end
+        return 1
+    end
+
+    -- Live params present — read mode and per-mode args from params.
+    -- Mode option indices: 1=sequins-derived, 2=fixed, 3=user sequence, 4=random
+    local mode_idx = params:get(mode_param_id)
+    if mode_idx == 1 then  -- sequins-derived
         local seq = Sequencer.Seq[x][y]
         local num = seq()
         local den = seq()
-        local scale = sm.scale or 1
-        if den == 0 then return scale end  -- guard against div-by-0
+        local scale = params:get(prefix .. 'scale') or 1
+        if den == 0 then return scale end
         return (num / den) * scale
-    elseif sm.mode == 'user_seq' then
-        local pattern_index = sm.pattern_index or 1
-        local pattern = Sequencer.User_Seq_Patterns[pattern_index]
-        if pattern then return pattern() end
-        return 1
-    elseif sm.mode == 'random' then
-        local lo = sm.random_min or 1
-        local hi = sm.random_max or 16
-        return math.random(lo, hi)
+    elseif mode_idx == 2 then  -- fixed
+        return params:get(prefix .. 'fixed_value') or 1
+    elseif mode_idx == 3 then  -- user_seq
+        return Sequencer._user_seq_step(x, y)
+    elseif mode_idx == 4 then  -- random
+        return math.random(
+            params:get(prefix .. 'random_min') or 1,
+            params:get(prefix .. 'random_max') or 16)
     end
     return 1
+end
+
+-- Per-cell user-sequence step (cycles through configured steps).
+-- Cursor is held in Sequencer._user_seq_cursors[x][y].
+Sequencer._user_seq_cursors = {}
+function Sequencer._user_seq_step(x, y)
+    if Sequencer._user_seq_cursors[x] == nil then
+        Sequencer._user_seq_cursors[x] = {}
+    end
+    local prefix = 'cell_' .. x .. '_' .. y .. '_seq_'
+    local num_steps = params:get(prefix .. 'num_steps') or 4
+    local cursor = (Sequencer._user_seq_cursors[x][y] or 0) % num_steps + 1
+    Sequencer._user_seq_cursors[x][y] = cursor
+    return params:get(prefix .. 'step_' .. cursor .. '_duration') or 1
 end
 
 -- ========================================================================
@@ -299,31 +338,53 @@ function Sequencer._init_value_modes()
 end
 
 -- Compute a value for cell [x][y]'s value_kind ('position'|'duration'|'rate').
--- In 'lied' mode, returns nil — caller (cell_roles.dispatch) reads sequins
--- directly and applies role-specific mapping.
--- In 'fixed' mode, returns the configured fixed value.
--- In 'user_seq', returns next value from the cell's configured pattern.
--- In 'random', returns math.random(min, max).
+-- Returns nil for 'lied' mode (caller derives from sequins directly).
 function Sequencer.get_value(x, y, value_kind)
-    local vm = Sequencer.Value_Mode[x]
-        and Sequencer.Value_Mode[x][y]
-        and Sequencer.Value_Mode[x][y][value_kind]
-    if vm == nil then return nil end  -- 'lied' fallback signaled by nil
+    local prefix = 'cell_' .. x .. '_' .. y .. '_' .. value_kind .. '_'
+    local mode_param_id = prefix .. 'mode'
 
-    if vm.mode == 'lied' then
+    if params.lookup[mode_param_id] == nil then
+        -- Fallback to in-memory Value_Mode (Sub-plan B's defaults)
+        local vm = Sequencer.Value_Mode[x]
+            and Sequencer.Value_Mode[x][y]
+            and Sequencer.Value_Mode[x][y][value_kind]
+        if vm == nil then return nil end
+        if vm.mode == 'lied' then return nil
+        elseif vm.mode == 'fixed' then return vm.fixed_value
+        elseif vm.mode == 'random' then
+            return math.random() * ((vm.random_max or 1) - (vm.random_min or 0))
+                + (vm.random_min or 0)
+        end
         return nil
-    elseif vm.mode == 'fixed' then
-        return vm.fixed_value
-    elseif vm.mode == 'user_seq' then
-        local pattern = vm.pattern  -- a Sequins instance stored at cell
-        if pattern then return pattern() end
-        return nil
-    elseif vm.mode == 'random' then
-        local lo = vm.random_min or 0
-        local hi = vm.random_max or 1
+    end
+
+    -- Mode option indices: 1=lied, 2=fixed, 3=user sequence, 4=random
+    local mode_idx = params:get(mode_param_id)
+    if mode_idx == 1 then return nil  -- lied
+    elseif mode_idx == 2 then return params:get(prefix .. 'fixed_value')
+    elseif mode_idx == 3 then return Sequencer._user_value_step(x, y, value_kind)
+    elseif mode_idx == 4 then
+        local lo = params:get(prefix .. 'random_min') or 0
+        local hi = params:get(prefix .. 'random_max') or 1
         return math.random() * (hi - lo) + lo
     end
     return nil
+end
+
+Sequencer._user_value_cursors = {}
+function Sequencer._user_value_step(x, y, value_kind)
+    if Sequencer._user_value_cursors[x] == nil then
+        Sequencer._user_value_cursors[x] = {}
+    end
+    if Sequencer._user_value_cursors[x][y] == nil then
+        Sequencer._user_value_cursors[x][y] = {}
+    end
+    local prefix = 'cell_' .. x .. '_' .. y .. '_' .. value_kind .. '_'
+    local num_steps = params:get(prefix .. 'num_steps') or 4
+    local cursor = (Sequencer._user_value_cursors[x][y][value_kind] or 0)
+        % num_steps + 1
+    Sequencer._user_value_cursors[x][y][value_kind] = cursor
+    return params:get(prefix .. 'step_' .. cursor .. '_value')
 end
 
 -- Reset every cell's Seq_Mode to its naherinlied-derived default.
