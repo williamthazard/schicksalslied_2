@@ -867,9 +867,12 @@ function init()
         params:set('cell_' .. x .. '_2_role', role_idx)
     end
 
-    -- Refresh seq_mode visibility for all toggle cells
+    -- Refresh seq_mode visibility for all sequencer-enabled cells.
+    -- Row 8 cols 14-16 are mic/granular on/off toggles (NOT sequencer cells),
+    -- so they have no seq_mode params — skip them.
     for y = 2, 8, 2 do
-        for x = 1, 16 do
+        local max_x = (y == 8) and 13 or 16
+        for x = 1, max_x do
             local mode_idx = params:get('cell_' .. x .. '_' .. y .. '_seq_mode')
             params:set('cell_' .. x .. '_' .. y .. '_seq_mode', mode_idx)
         end
