@@ -119,17 +119,22 @@ Ringer {
         });
     }
 
-    // Free all running Synths in voice subgroups + update voiceParams[*][\bus]
-    // so the next trigger allocates fresh with the new output bus. Needed
-    // because Out.ar samples \bus at construction; .set on a running synth
-    // updates the control value but doesn't reroute audio.
+    // Free voice subgroups + update voiceParams[*][\bus] so the next trigger
+    // allocates fresh with the new output bus. Needed because Out.ar samples
+    // \bus at construction; .set on a running synth updates the control value
+    // but doesn't reroute audio. We use the same free+recreate pattern as
+    // resetVoices: simply calling freeAll would leave the subgroup Group node
+    // alive (isPlaying returns true), routing the next trigger into the
+    // re-trigger branch instead of fresh-allocate.
     reroute {
         arg busVal;
+        var s = Server.default;
         voiceKeys.do({ arg vK;
             voiceParams[vK][\bus] = busVal;
             if (singleVoices[vK].notNil) {
-                singleVoices[vK].freeAll;
+                singleVoices[vK].free;
             };
+            singleVoices[vK] = Group.new(voiceGroup);
         });
     }
 
