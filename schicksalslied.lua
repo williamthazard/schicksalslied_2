@@ -604,6 +604,54 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
+    -- ROW-2 CELLS GROUP (16 cells × 26 params + 4 bulk triggers = 420)
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('row_2_cells', 16 * 26 + 4)
+    do
+        local VoiceParams = require 'lib/voice_params'
+        for x = 1, 16 do
+            VoiceParams.add_row2_cell_block(x)
+        end
+        params:add{
+            type = 'trigger',
+            id = 'row_2_set_all_trisin',
+            name = 'row 2: all TriSin',
+            action = function()
+                for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 1) end
+            end,
+        }
+        params:add{
+            type = 'trigger',
+            id = 'row_2_set_all_ringer',
+            name = 'row 2: all Ringer',
+            action = function()
+                for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 2) end
+            end,
+        }
+        params:add{
+            type = 'trigger',
+            id = 'row_2_set_default_mix',
+            name = 'row 2: default mix',
+            action = function()
+                for x = 1, 16 do
+                    params:set('cell_' .. x .. '_2_role',
+                        VoiceParams._default_role_index(x))
+                end
+            end,
+        }
+        params:add{
+            type = 'trigger',
+            id = 'row_2_randomize_roles',
+            name = 'row 2: randomize roles',
+            action = function()
+                for x = 1, 16 do
+                    params:set('cell_' .. x .. '_2_role', math.random(1, 11))
+                end
+            end,
+        }
+    end
+
+    -- ────────────────────────────────────────────────────────────────────
     -- SAMPLERS GROUP (16 slots × 10 params + 1 randomize-all = 161)
     -- ────────────────────────────────────────────────────────────────────
     params:add_group('samplers', 16 * 10 + 1)
