@@ -534,7 +534,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- GLOBAL GROUP (spec §9)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('global', 6)
+    params:add_group('global', 8)
 
     params:add{
         type = 'file',
@@ -571,6 +571,31 @@ local function add_params()
         id = 'reset_all_seq_modes',
         name = 'reset all seq modes',
         action = function() Sequencer.reset_all_seq_modes_to_default() end,
+    }
+    -- Scale + root for quantizing pitched dispatchers (TriSin, Ringer, crow,
+    -- JF, w/syn, w/del, MIDI). Default = chromatic + C = no quantization,
+    -- matching schicksalslied 1.x's historical behavior. Built dynamically
+    -- from MusicUtil.SCALES; index 1 is the special 'chromatic' (pass-through).
+    -- Helper added in Task 2.4 (Roles.quantize_note).
+    params:add{
+        type = 'option',
+        id = 'scale_mode',
+        name = 'scale',
+        options = (function()
+            local list = { 'chromatic' }
+            for i = 1, #MusicUtil.SCALES do
+                table.insert(list, MusicUtil.SCALES[i].name)
+            end
+            return list
+        end)(),
+        default = 1,
+    }
+    params:add{
+        type = 'option',
+        id = 'root_note',
+        name = 'root note',
+        options = { 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B' },
+        default = 1,
     }
 ```
 
@@ -657,6 +682,192 @@ Deploy to Norns. Open PARAMETERS menu, navigate to GLOBAL group. Confirm 6 entri
 ```bash
 git add schicksalslied.lua lib/sequencer.lua
 git commit -m "schicksalslied 2.0: add Global params group + reorder for forward refs"
+```
+
+### Task 2.3: Add `crow.ii.jf.pullup(true)` to crow_reinit
+
+**Files:**
+- Modify: `schicksalslied.lua` (`crow_reinit` function)
+
+**Rationale:** `crow.ii.jf.pullup(true)` enables crow's i2c pull-up resistors, which JF needs to receive valid voltage levels over the i2c bus. Without it, JF's behavior depends on whether another i2c device on the bus is asserting pull-up — which is undefined. Awake calls this alongside `jf.mode(1)` whenever JF mode is selected. Our `crow_reinit` already calls `jf.mode(1)` but missed `pullup(true)`.
+
+- [ ] **Step 1: Add the pullup call to `crow_reinit`**
+
+In `schicksalslied.lua`, in `crow_reinit()`, after `crow.input[1].mode('clock')` and before `crow.ii.jf.mode(1)`, add:
+
+```lua
+    crow.ii.pullup(true)
+```
+
+Note: `crow.ii.pullup(true)` (NOT `crow.ii.jf.pullup(true)`). The pullup setting is per-bus, not per-device. Awake uses `crow.ii.jf.pullup(true)` which works because under the hood it calls the same `crow.ii.pullup`; both styles are valid but `crow.ii.pullup(true)` is the more direct form.
+
+Final `crow_reinit` start should look like:
+
+```lua
+function crow_reinit()
+    crow.input[1].mode('clock')
+    crow.ii.pullup(true)  -- needed for JF to receive valid v/oct levels
+    crow.ii.jf.mode(1)
+    crow.ii.jf.run_mode(1)
+    crow.ii.jf.tick(clock.get_tempo())
+    -- ... rest unchanged ...
+end
+```
+
+- [ ] **Step 2: Deploy + verify JF v/oct response**
+
+With JF connected over i2c: deploy, boot the script. Set cell (1, 2) role to JF via the params menu (or REPL until Task 6.2 wires that up). Assign text to (1, 2), toggle on. Listen to JF — pitches should now span a recognizable v/oct range. If pitches sound randomly clamped to a narrow range, pullup is likely still wrong.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add schicksalslied.lua
+git commit -m "schicksalslied 2.0: add crow.ii.pullup(true) to crow_reinit for JF"
+```
+
+### Task 2.4: Add global scale quantization (chromatic default)
+
+**Files:**
+- Modify: `lib/cell_roles.lua` (add `Roles.quantize_note` helper; apply in pitched dispatchers)
+
+**Rationale:** Awake exposes a `scale` option that quantizes all pitched output to a musical scale. Schicksalslied has never had this — every pitch was raw byte-derived semitones. Default to `chromatic` (pass-through) so existing behavior is exactly preserved; user can opt into a scale globally to constrain all 10 pitched roles at once. The `scale_mode` + `root_note` params are added in Task 2.2; this task wires the dispatch side.
+
+- [ ] **Step 1: Add the `quantize_note` helper to `cell_roles.lua`**
+
+In `lib/cell_roles.lua`, near the top (after the `require 'musicutil'` line):
+
+```lua
+-- Global pitch quantization helper. Returns the input midi_note unchanged
+-- when scale_mode == 1 (chromatic / no quantization — schicksalslied's
+-- historical behavior). Otherwise snaps to the chosen scale's nearest note.
+-- Called by every pitched role dispatcher (TriSin, Ringer, crow 1+2, crow 3+4,
+-- JF, JF run, JF quantize, w/syn, w/del, MIDI).
+function Roles.quantize_note(midi_note)
+    local scale_idx = params:get('scale_mode')
+    if scale_idx == nil or scale_idx == 1 then
+        return midi_note  -- chromatic / pre-params-init = no quantization
+    end
+    local root = (params:get('root_note') or 1) - 1  -- 0-based 0..11
+    -- scale_mode index 2 = MusicUtil.SCALES[1], so offset by 1
+    local scale = MusicUtil.generate_scale_of_length(root,
+        MusicUtil.SCALES[scale_idx - 1].name, 128)
+    return MusicUtil.snap_note_to_array(midi_note, scale)
+end
+```
+
+- [ ] **Step 2: Update the TriSin and Ringer dispatchers to quantize**
+
+In `lib/cell_roles.lua`, in the `Roles.dispatch_row_2` table, update the `['TriSin']` and `['Ringer']` entries:
+
+```lua
+    ['TriSin'] = function(x, y, seq)
+        Roles.ensure_allocated(x, y)
+        local cell_id = Roles.cell_id(x, y)
+        local note = Roles.quantize_note(seq() % 32 + 49)
+        local freq = MusicUtil.note_num_to_freq(note)
+        local voice_key = next_voice_key(cell_id, 4)
+        engine.trisin_trigger(cell_id, voice_key, freq)
+    end,
+
+    ['Ringer'] = function(x, y, seq)
+        Roles.ensure_allocated(x, y)
+        local cell_id = Roles.cell_id(x, y)
+        local note = Roles.quantize_note(seq() % 32 + 49)
+        local freq = MusicUtil.note_num_to_freq(note)
+        local voice_key = next_voice_key(cell_id, 4)
+        engine.ringer_trigger(cell_id, voice_key, freq)
+    end,
+```
+
+- [ ] **Step 3: Update the v/oct crow dispatchers to quantize**
+
+For crow CV / JF / w/syn / w/del, the byte-derived value `seq() % 32 + 1` is a semitone offset (1..32). We treat it as a MIDI note number for quantization purposes (the receiving module interprets 0V as its own reference note), then convert back to v/oct as `note / 12`.
+
+Replace these entries in `Roles.dispatch_row_2`:
+
+```lua
+    ['crow 1+2'] = function(x, y, seq)
+        -- consumes 4 bytes: pitch (v/oct), slew, attack, release
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.output[1].volts = pitch_note / 12
+        crow.output[1].slew = (seq() % 32 + 1) / 300
+        crow.output[2].dyn.attack = (seq() % 32 + 1) / 40
+        crow.output[2].dyn.release = (seq() % 32 + 1) / 40
+        crow.output[2]()
+    end,
+
+    ['crow 3+4'] = function(x, y, seq)
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.output[3].volts = pitch_note / 12
+        crow.output[3].slew = (seq() % 32 + 1) / 300
+        crow.output[4].dyn.attack = (seq() % 32 + 1) / 40
+        crow.output[4].dyn.release = (seq() % 32 + 1) / 40
+        crow.output[4]()
+    end,
+
+    ['JF'] = function(x, y, seq)
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local level = seq() % 5 + 1
+        crow.ii.jf.play_note(pitch_note / 12, level)
+    end,
+
+    ['JF run'] = function(x, y, seq)
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.ii.jf.run(pitch_note / 12)
+    end,
+
+    ['JF quantize'] = function(x, y, seq)
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.ii.jf.quantize(pitch_note / 12)
+    end,
+
+    ['w/syn'] = function(x, y, seq)
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        local level = seq() % 5 + 1
+        crow.ii.wsyn.play_note(pitch_note / 12, level)
+    end,
+
+    ['w/del'] = function(x, y, seq)
+        local pitch_note = Roles.quantize_note(seq() % 32 + 1)
+        crow.ii.wdel.time(0)
+        crow.ii.wdel.freq(pitch_note / 12)
+        crow.ii.wdel.pluck(seq() % 5 + 1)
+    end,
+```
+
+- [ ] **Step 4: Update MIDI dispatch to quantize**
+
+In `lib/midi_role.lua`, in `Midi.dispatch`, change the note line:
+
+```lua
+    local note = seq() % 32 + 49  -- MIDI note range 49..80 (C#3..G#5)
+```
+
+to:
+
+```lua
+    local Roles = require 'lib/cell_roles'
+    local note = Roles.quantize_note(seq() % 32 + 49)  -- range 49..80, scale-snapped
+```
+
+- [ ] **Step 5: Verify with luac**
+
+```bash
+luac -p /Users/spencergraham/Desktop/other/lied-update/schicksalslied/lib/cell_roles.lua
+luac -p /Users/spencergraham/Desktop/other/lied-update/schicksalslied/lib/midi_role.lua
+```
+
+- [ ] **Step 6: Deploy + verify default chromatic = no change**
+
+Deploy. With scale_mode = chromatic (default), play several TriSin/Ringer/MIDI cells. Confirm pitches are identical to pre-quantization behavior (use a chromatic tuner or just A/B compare with a recording from before this task).
+
+Change scale_mode to "Major" with root_note = C. Confirm pitches now snap to the C major scale (no F#, no C#, etc.). Try Dorian, Minor, Phrygian — confirm each constrains the pitch set audibly.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add lib/cell_roles.lua lib/midi_role.lua
+git commit -m "schicksalslied 2.0: add global scale quantization (chromatic default)"
 ```
 
 ---
@@ -778,12 +989,13 @@ git commit -m "schicksalslied 2.0: add Crow params group (wsyn lpg/fm, wdel feed
 - Create: `lib/midi_role.lua`
 - Modify: `schicksalslied.lua` (require + add MIDI device param)
 
-- [ ] **Step 1: Create `lib/midi_role.lua`**
+- [ ] **Step 1: Create `lib/midi_role.lua` (modeled on awake.lua's idiom)**
 
 ```lua
 -- lib/midi_role.lua — MIDI output role state + dispatch
--- Owns: the connected MIDI device handle, per-cell channel/gate state
--- Used by cell_roles.lua when a cell's role is 'MIDI'.
+-- Owns: the connected MIDI device handle, per-cell active-note tracking.
+-- Pattern modeled on tehn/awake.lua: dynamic vports list, per-note tracking
+-- for clean note-offs, no all-channel CC123 blast.
 
 local Midi = {}
 
@@ -791,20 +1003,37 @@ local Midi = {}
 -- nil-safe so other modules (panic, dispatch) can check before calling.
 Midi.device = nil
 
--- Per-cell active note tracking (so we can note_off the previously-on note
--- before triggering a new one — prevents stuck notes on rapid retriggers).
--- Keyed by cell_id ('1_2' etc.), value = { note, channel }
+-- Per-cell active-note tracking. Keyed by cell_id ('1_2'); value is
+-- { note=N, channel=C } for the currently-sounding note from that cell.
+-- We use this both to note-off the previous note before retriggering, and
+-- to drive panic's all_notes_off without resorting to a CC123 blast that
+-- could step on other scripts sharing the device.
 Midi.active_notes = {}
 
+-- Build the device list from midi.vports. Called once at Midi.init().
+-- Each vport may have a name like "norns" (built-in) or "OP-1 field" (USB);
+-- empty vports get a "port N" placeholder so the option list always has
+-- 4 entries (matching Norns's vport count).
+function Midi.build_device_list()
+    local devices = {}
+    for i = 1, #midi.vports do
+        local n = midi.vports[i].name
+        table.insert(devices, n ~= "none" and n or ('port ' .. i))
+    end
+    return devices
+end
+
 -- Initialize MIDI: connect to the device at the current midi_device param.
+-- Called from schicksalslied.lua's init() AFTER add_params + params:bang.
 function Midi.init()
     Midi.connect_device(params:get('midi_device') or 1)
 end
 
--- (Re-)connect to the MIDI device at index n (1-4).
+-- (Re-)connect to the MIDI device at vport index n.
+-- Called from the midi_device param action.
 function Midi.connect_device(n)
     Midi.device = midi.connect(n)
-    print(string.format('MIDI: connected device %d (%s)',
+    print(string.format('MIDI: connected vport %d (%s)',
         n, Midi.device.name or 'unknown'))
 end
 
@@ -817,34 +1046,56 @@ function Midi.dispatch(x, y, seq)
     local channel = params:get('cell_' .. x .. '_2_midi_channel') or 1
     local note = seq() % 32 + 49  -- MIDI note range 49..80 (C3..G♯5)
     local vel = math.min(127, seq() % 32 + 49)  -- velocity range 49..80
-    -- Note-off any previously-active note from this cell
+    -- Note-off any previously-active note from this cell. Use the PREVIOUS
+    -- channel (which may differ from current if channel changed mid-sequence)
+    -- so the off lands on the same channel the on was sent to.
+    -- Note: Norns MIDI signature is dev:note_off(note, vel, ch); vel may be nil.
     local prev = Midi.active_notes[cell_id]
     if prev then
-        Midi.device:note_off(prev.note, prev.channel)
+        Midi.device:note_off(prev.note, nil, prev.channel)
     end
     Midi.active_notes[cell_id] = { note = note, channel = channel }
     Midi.device:note_on(note, vel, channel)
-    -- Schedule note-off after gate time
-    local gate_time = params:get('cell_' .. x .. '_2_midi_gate_time') or 0.1
+    -- Schedule note-off after gate time. Capture note + channel in the
+    -- closure so the off always targets the on's exact pair, even if a
+    -- subsequent dispatch replaces active_notes[cell_id].
+    -- Gate time is a single global param (modeled on awake's simpler
+    -- "one gate control" approach — per-cell gate was over-engineered).
+    local gate_time = params:get('midi_gate_time') or 0.1
     clock.run(function()
         clock.sleep(gate_time)
-        -- Only note_off if this is still the active note for this cell
+        Midi.device:note_off(note, nil, channel)
+        -- Only clear active_notes if it's still our pair (a newer dispatch
+        -- may have already replaced it; that dispatch's note-off-of-previous
+        -- already cleaned up our on).
         local current = Midi.active_notes[cell_id]
         if current and current.note == note and current.channel == channel then
-            Midi.device:note_off(note, channel)
             Midi.active_notes[cell_id] = nil
         end
     end)
 end
 
--- All-notes-off across all 16 channels of the active device.
--- Called from panic.
+-- All-notes-off — iterate tracked active_notes and send a note_off for each.
+-- Cleaner than blasting CC 123 on all 16 channels (which would interfere
+-- with other scripts/processes sharing the device).
 function Midi.all_notes_off()
     if Midi.device == nil then return end
-    for ch = 1, 16 do
-        Midi.device:cc(123, 0, ch)
+    for _, entry in pairs(Midi.active_notes) do
+        Midi.device:note_off(entry.note, nil, entry.channel)
     end
     Midi.active_notes = {}
+end
+
+-- Channel-change handler. When a cell's MIDI channel changes mid-sequence,
+-- note-off the cell's currently-active note (on the OLD channel) so it
+-- doesn't get stranded. Called from the per-cell midi_channel param action.
+function Midi.on_channel_change(x, y)
+    local cell_id = string.format("%d_%d", x, y)
+    local entry = Midi.active_notes[cell_id]
+    if entry and Midi.device then
+        Midi.device:note_off(entry.note, nil, entry.channel)
+        Midi.active_notes[cell_id] = nil
+    end
 end
 
 return Midi
@@ -862,22 +1113,42 @@ In `add_params()`, add a new MIDI sub-section after the crow group (this is its 
 
 ```lua
     -- ────────────────────────────────────────────────────────────────────
-    -- MIDI GROUP (spec §3 — MIDI role)
+    -- MIDI GROUP (spec §3 — MIDI role; patterned on tehn/awake.lua)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('midi', 2)
+    params:add_group('midi', 3)
 
+    -- Device list built dynamically from midi.vports — option indices match
+    -- vport numbers, so params:get returns a value usable directly with
+    -- midi.connect(n). Built ONCE at add_params time; if the user plugs in
+    -- a new device after init, they must restart the script to see it
+    -- in the option list (matches awake.lua's idiom; norns doesn't expose
+    -- a vport-change callback).
     params:add{
-        type = 'number',
+        type = 'option',
         id = 'midi_device',
-        name = 'midi device',
-        min = 1, max = 4, default = 1,
-        action = function(n) Midi_Role.connect_device(n) end,
+        name = 'midi out device',
+        options = Midi_Role.build_device_list(),
+        default = 1,
+        action = function(n)
+            Midi_Role.all_notes_off()  -- clean up before switching devices
+            Midi_Role.connect_device(n)
+        end,
     }
     params:add{
         type = 'number',
         id = 'midi_default_channel',
         name = 'midi default channel',
         min = 1, max = 16, default = 1,
+    }
+    -- Global note-off delay (in seconds) for every MIDI cell. Awake uses
+    -- clock-relative percentage; for schicksalslied where each cell has its
+    -- own seq_mode-driven rate, an absolute-time gate is simpler than
+    -- computing "percentage of next step" (which would require lookahead).
+    params:add{
+        type = 'control',
+        id = 'midi_gate_time',
+        name = 'midi gate time',
+        controlspec = controlspec.new(0.01, 5, 'exp', 0.001, 0.1, 's'),
     }
 ```
 
@@ -1809,18 +2080,19 @@ function VoiceParams.add_row2_cell_block(x)
         action = function(v) VoiceParams._set_ringer_only(x, 'index', v) end,
     }
 
-    -- ── MIDI-only params ──
+    -- ── MIDI-only param (gate time is global, in the MIDI group) ──
+    -- Channel-change handler note-offs the cell's currently-active note
+    -- on the OLD channel so it doesn't get stranded when we start sending
+    -- to a new channel.
     params:add{
         type = 'number',
         id = 'cell_' .. x .. '_2_midi_channel',
         name = 'cell ' .. x .. ' midi channel',
         min = 1, max = 16, default = 1,
-    }
-    params:add{
-        type = 'control',
-        id = 'cell_' .. x .. '_2_midi_gate_time',
-        name = 'cell ' .. x .. ' midi gate time',
-        controlspec = cs.new(0.01, 10, 'lin', 0.01, 0.1, 's'),
+        action = function(_)
+            local Midi = require 'lib/midi_role'
+            Midi.on_channel_change(x, 2)
+        end,
     }
 
     -- ── Per-cell randomize trigger ──
@@ -1880,7 +2152,7 @@ function VoiceParams._update_row2_visibility(x, role)
         'cutoff', 'cutoff_env', 'resonance', 'freq_slew',
     }
     local ringer_only = { 'decay' }
-    local midi_only = { 'midi_channel', 'midi_gate_time' }
+    local midi_only = { 'midi_channel' }
     local shared = { 'amp', 'amp_slew', 'pan', 'pan_slew', 'polyphony', 'bus_routing' }
 
     local prefix = 'cell_' .. x .. '_2_'
@@ -1922,7 +2194,7 @@ function VoiceParams.randomize_row2_cell(x)
 end
 ```
 
-Count per cell: 1 role + 6 shared + 16 trisin-only + 1 ringer-only + 2 midi-only + 1 randomize = 27 params per cell × 16 cells = 432 row-2 cell params.
+Count per cell: 1 role + 6 shared + 16 trisin-only + 1 ringer-only + 1 midi-only + 1 randomize = 26 params per cell × 16 cells = 416 row-2 cell params.
 
 - [ ] **Step 2: Verify file parses with luac**
 
@@ -1950,9 +2222,9 @@ In `add_params()`, after the granular_delay group:
 
 ```lua
     -- ────────────────────────────────────────────────────────────────────
-    -- ROW-2 CELLS GROUP (16 cells × 27 params + 4 bulk triggers = 436)
+    -- ROW-2 CELLS GROUP (16 cells × 26 params + 4 bulk triggers = 420)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 16 * 27 + 4)
+    params:add_group('row_2_cells', 16 * 26 + 4)
     for x = 1, 16 do
         VoiceParams.add_row2_cell_block(x)
     end
@@ -3092,12 +3364,12 @@ git commit -m "schicksalslied 2.0: rewrite README for 2.0 features"
 - **Files created:** 4 (`voice_params.lua`, `lied_lfos.lua`, `midi_role.lua`, `grid_grain_params.lua`)
 - **Files modified:** 8 (4 SC voice classes, `Lied.sc`, `Engine_Lied.sc`, `schicksalslied.lua`, `sequencer.lua`, `cell_roles.lua`, `test.scd`, spec)
 - **Param count breakdown:**
-  - Global: 6 · Crow: 10 · MIDI: 2 · Granular delay: 38 · Samplers: 161 · One-shots: 131
-  - Row-2 cells: 436 (16 × 27 + 4 bulk) · Cell seq modes: 897 (64 × 14 + 1)
+  - Global: 8 · Crow: 10 · MIDI: 3 · Granular delay: 38 · Samplers: 161 · One-shots: 131
+  - Row-2 cells: 420 (16 × 26 + 4 bulk) · Cell seq modes: 897 (64 × 14 + 1)
   - Cell value modes: 798 (793 + 5 bulk) · LFOs: ~3666 (282 LFOs × ~13 params each)
-  - **Approximate total: ~6145 params** — consistent with the spec's ~7000 estimate; modest savings from consolidating amp/pan LFOs across the TriSin/Ringer shared sub-block.
+  - **Approximate total: ~6132 params** — consistent with the spec's ~7000 estimate; modest savings from consolidating amp/pan LFOs across the TriSin/Ringer shared sub-block + dropping per-cell MIDI gate time (now global) in favor of awake's simpler idiom.
 - **LFO count:** 282 (160 row-2 + 64 sampler + 52 oneshot + 6 crow). Spec §10 claimed ~332; the consolidation of amp/pan LFOs (shared between TriSin/Ringer per cell) accounts for the delta.
-- **Tasks:** 27 across 9 groups
+- **Tasks:** 29 across 9 groups (Group 2 has 4 tasks after awake-review additions of jf.pullup + global scale quantization)
 - **Manual verification:** PSET round-trip, CPU budget across 5 stages, 30-min soak
 
 ### Cross-references to earlier sub-plan test items (already verified, not repeated here)
