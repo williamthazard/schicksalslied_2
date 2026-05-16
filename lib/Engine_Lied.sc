@@ -14,6 +14,7 @@ Engine_Lied : CroneEngine {
         this.addCommand(\set_beat_sec, "f", { arg msg;
             kernel.setBeatSec(msg[1]);
         });
+        this.addCommand(\set_out_amp,         "f", { arg msg; kernel.setOutAmp(msg[1]); });
         this.addCommand(\set_mic_amp,         "f", { arg msg; kernel.setMicAmp(msg[1]); });
         this.addCommand(\set_mic_dry_amp,     "f", { arg msg; kernel.setMicDryAmp(msg[1]); });
         this.addCommand(\set_granular_out_amp,"f", { arg msg; kernel.setGranularOutAmp(msg[1]); });

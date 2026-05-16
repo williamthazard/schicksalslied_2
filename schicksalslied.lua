@@ -274,12 +274,15 @@ function redraw()
     screen.move(5, 59)
     screen.text("> " .. displayed_string)
 
-    -- History items above (up to 4-5 lines, scrolling up)
+    -- History items above (up to 4-5 lines, scrolling up).
+    -- i == 1 is the line at history_index (selected by E1): draw brighter.
     for i = 1, 5 do
         if not (history_index - i >= 0) then break end
+        screen.level(i == 1 and 15 or 4)
         screen.move(5, 55 - 10 * i)
         screen.text(history[history_index - i + 1] or "")
     end
+    screen.level(10)  -- restore for input box
 
     screen.update()
 end
@@ -357,19 +360,54 @@ local function panic()
 end
 
 function key(n, z)
-    if z == 0 then return end
+    if z == 0 then return end  -- act on press, not release
+
     if n == 1 then
-        panic()
+        -- K1: backspace — delete last char of displayed_string
+        if #displayed_string > 0 then
+            displayed_string = displayed_string:sub(1, -2)
+            grid_dirty = true
+        end
+
     elseif n == 2 then
-        Sequencer.toggle_pause()
-        grid_dirty = true
+        -- K2: append the currently-selected history line to displayed_string.
+        -- Mirrors the row-1 grid press semantics. history_index is updated by E1.
+        if #history > 0 and history_index >= 1 and history_index <= #history then
+            my_string = displayed_string .. history[history_index]
+            displayed_string = my_string
+            grid_dirty = true
+        end
+
     elseif n == 3 then
-        tap_tempo()
+        -- K3: ENTER — promote displayed_string to my_string, add to history,
+        -- clear displayed_string. Same as keyboard ENTER (spec §7 text input flow).
+        if #displayed_string > 0 then
+            my_string = displayed_string
+            table.insert(history, displayed_string)
+            displayed_string = ""
+            history_index = #history
+            new_line = true
+            grid_dirty = true
+        end
     end
 end
 
 function enc(n, d)
-    -- (no encoder actions currently)
+    if n == 1 then
+        -- E1: scroll history index. Provides visual highlight via redraw.
+        if #history == 0 then return end
+        history_index = util.clamp(history_index + d, 0, #history)
+        grid_dirty = true
+        -- (does NOT modify displayed_string — K2 commits the selection)
+
+    elseif n == 2 then
+        -- E2: global amp
+        params:delta('global_amp', d)
+
+    elseif n == 3 then
+        -- E3: BPM
+        params:delta('clock_tempo', d)
+    end
 end
 
 -- ========================================================================
@@ -404,7 +442,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- GLOBAL GROUP (spec §9)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('global', 'global', 9)
+    params:add_group('global', 'global', 10)
 
     params:add{
         type = 'file',
@@ -466,6 +504,13 @@ local function add_params()
         name = 'root note',
         options = { 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B' },
         default = 1,
+    }
+    params:add{
+        type = 'control',
+        id = 'global_amp',
+        name = 'global amp',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 1, ''),
+        action = function(v) engine.set_out_amp(v) end,
     }
     params:add{
         type = 'trigger',

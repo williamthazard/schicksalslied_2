@@ -207,6 +207,10 @@ Lied {
         ("Lied: beat_sec = " ++ beat_sec).postln;
     }
 
+    setOutAmp { arg amp;
+        outSynth.set(\amp, amp);
+    }
+
     // -----------------------------------------------------------------
     // Lazy granular chain allocation
     // -----------------------------------------------------------------
