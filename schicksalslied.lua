@@ -641,14 +641,39 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- MASTER FX GROUP — delay + reverb controls
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('master_fx', 'master fx', 6)
+    params:add_group('master_fx', 'master fx', 7)
 
+    params:add{
+        type = 'option',
+        id = 'delay_sync',
+        name = 'delay sync',
+        options = { 'free', '1/16', '1/8', '1/4', '1/2', '1', '2', '4' },
+        default = 1,  -- 'free'
+        action = function(idx)
+            if idx == 1 then  -- free
+                params:show('delay_time')
+                engine.set_delay_time(params:get('delay_time'))
+            else
+                params:hide('delay_time')
+                -- Map option idx 2..8 to beats {0.0625, 0.125, 0.25, 0.5, 1, 2, 4}
+                local beats_for_idx = { 0.0625, 0.125, 0.25, 0.5, 1, 2, 4 }
+                local beats = beats_for_idx[idx - 1]
+                engine.set_delay_time(beats * clock.get_beat_sec())
+            end
+            _menu.rebuild_params()
+        end,
+    }
     params:add{
         type = 'control',
         id = 'delay_time',
         name = 'delay time',
         controlspec = controlspec.new(0.01, 2, 'lin', 0.01, 0.3, 's'),
-        action = function(v) engine.set_delay_time(v) end,
+        action = function(v)
+            if params:get('delay_sync') == 1 then  -- only apply in free mode
+                engine.set_delay_time(v)
+            end
+            -- in beat-sync modes, delay_sync's action is the authority
+        end,
     }
     params:add{
         type = 'control',
@@ -918,6 +943,11 @@ function init()
     engine.set_beat_sec(clock.get_beat_sec())
     params:set_action('clock_tempo', function(bpm)
         engine.set_beat_sec(clock.get_beat_sec())
+        -- if delay is beat-synced, re-fire delay_sync action so the seconds
+        -- value pushed to SC reflects the new tempo
+        if params.lookup['delay_sync'] ~= nil and params:get('delay_sync') ~= 1 then
+            params:set('delay_sync', params:get('delay_sync'))  -- re-fires action
+        end
     end)
 
     Midi.init()
