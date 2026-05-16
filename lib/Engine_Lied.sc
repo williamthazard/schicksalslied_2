@@ -15,6 +15,12 @@ Engine_Lied : CroneEngine {
             kernel.setBeatSec(msg[1]);
         });
         this.addCommand(\set_out_amp,         "f", { arg msg; kernel.setOutAmp(msg[1]); });
+        this.addCommand(\set_delay_time,  "f", { arg msg; kernel.setDelayTime(msg[1]); });
+        this.addCommand(\set_delay_decay, "f", { arg msg; kernel.setDelayDecay(msg[1]); });
+        this.addCommand(\set_delay_amp,   "f", { arg msg; kernel.setDelayAmp(msg[1]); });
+        this.addCommand(\set_reverb_room, "f", { arg msg; kernel.setReverbRoom(msg[1]); });
+        this.addCommand(\set_reverb_damp, "f", { arg msg; kernel.setReverbDamp(msg[1]); });
+        this.addCommand(\set_reverb_amp,  "f", { arg msg; kernel.setReverbAmp(msg[1]); });
         this.addCommand(\set_mic_amp,         "f", { arg msg; kernel.setMicAmp(msg[1]); });
         this.addCommand(\set_mic_dry_amp,     "f", { arg msg; kernel.setMicDryAmp(msg[1]); });
         this.addCommand(\set_granular_out_amp,"f", { arg msg; kernel.setGranularOutAmp(msg[1]); });

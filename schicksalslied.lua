@@ -639,6 +639,54 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
+    -- MASTER FX GROUP — delay + reverb controls
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('master_fx', 'master fx', 6)
+
+    params:add{
+        type = 'control',
+        id = 'delay_time',
+        name = 'delay time',
+        controlspec = controlspec.new(0.01, 2, 'lin', 0.01, 0.3, 's'),
+        action = function(v) engine.set_delay_time(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'delay_decay',
+        name = 'delay decay',
+        controlspec = controlspec.new(0.01, 10, 'lin', 0.01, 0.5, 's'),
+        action = function(v) engine.set_delay_decay(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'delay_amp',
+        name = 'delay amp',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 1, ''),
+        action = function(v) engine.set_delay_amp(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'reverb_room',
+        name = 'reverb room',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.5, ''),
+        action = function(v) engine.set_reverb_room(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'reverb_damp',
+        name = 'reverb damp',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.5, ''),
+        action = function(v) engine.set_reverb_damp(v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'reverb_amp',
+        name = 'reverb amp',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 1, ''),
+        action = function(v) engine.set_reverb_amp(v) end,
+    }
+
+    -- ────────────────────────────────────────────────────────────────────
     -- ROW-2 CELLS GROUP (16 cells × 41 params + 1 separator/cell + 4 bulk = 660)
     -- Each cell: 1 separator + 1 role + 14 seq_mode + 6 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 41
     -- ────────────────────────────────────────────────────────────────────

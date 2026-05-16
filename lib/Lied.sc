@@ -211,6 +211,30 @@ Lied {
         outSynth.set(\amp, amp);
     }
 
+    setDelayTime { arg t;
+        delaySynth.set(\delayTime, t);
+    }
+
+    setDelayDecay { arg t;
+        delaySynth.set(\decayTime, t);
+    }
+
+    setDelayAmp { arg amp;
+        delaySynth.set(\amp, amp);
+    }
+
+    setReverbRoom { arg room;
+        reverbSynth.set(\room, room);
+    }
+
+    setReverbDamp { arg damp;
+        reverbSynth.set(\damp, damp);
+    }
+
+    setReverbAmp { arg amp;
+        reverbSynth.set(\amp, amp);
+    }
+
     // -----------------------------------------------------------------
     // Lazy granular chain allocation
     // -----------------------------------------------------------------
