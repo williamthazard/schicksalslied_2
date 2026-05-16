@@ -13,6 +13,10 @@ Lied {
     var <bufferRefCounts;           // Dictionary: filePath → Integer (# slots using it)
     var <samplerPaths;              // Dictionary: slot (Integer) → filePath (for refcount maintenance)
     var <oneShotPaths;              // Dictionary: slot → filePath
+    var <pendingTriSinParams;  // Dictionary: cellId (Symbol) → Dictionary(paramKey → value)
+    var <pendingRingerParams;
+    var <pendingSamplerParams; // Dictionary: slot (Integer) → Dictionary
+    var <pendingOneShotParams;
 
     // Granular delay state
     var <delayBuf, <micBus, <ptrBus;
@@ -39,6 +43,10 @@ Lied {
         bufferRefCounts  = Dictionary.new;
         samplerPaths     = Dictionary.new;
         oneShotPaths     = Dictionary.new;
+        pendingTriSinParams  = Dictionary.new;
+        pendingRingerParams  = Dictionary.new;
+        pendingSamplerParams = Dictionary.new;
+        pendingOneShotParams = Dictionary.new;
         "Lied init: allocating buses + master FX...".postln;
 
         // --- Audio buses ---
@@ -448,9 +456,21 @@ Lied {
     // -----------------------------------------------------------------
 
     allocTriSin { arg cellId;
+        var pending;
         if (triSinInstances[cellId].isNil) {
             triSinInstances[cellId] = TriSin.new;
-            ("TriSin allocated: " ++ cellId).postln;
+            // Apply pending param values that were set before alloc
+            pending = pendingTriSinParams[cellId];
+            if (pending.notNil) {
+                pending.keysValuesDo({ |k, v|
+                    triSinInstances[cellId].setParam('all', k, v);
+                });
+                pendingTriSinParams[cellId] = nil;
+                ("TriSin allocated: " ++ cellId
+                    ++ " (applied " ++ pending.size ++ " pending params)").postln;
+            } {
+                ("TriSin allocated: " ++ cellId).postln;
+            };
         }
     }
 
@@ -459,6 +479,7 @@ Lied {
         if (inst.notNil) {
             inst.free;
             triSinInstances[cellId] = nil;
+            pendingTriSinParams[cellId] = nil;  // clear stale pending
             ("TriSin freed: " ++ cellId).postln;
         }
     }
@@ -474,7 +495,13 @@ Lied {
         var inst = triSinInstances[cellId];
         if (inst.notNil) {
             inst.setParam('all', paramKey, paramValue);
-        }
+        } {
+            // No instance yet — cache for when alloc happens
+            if (pendingTriSinParams[cellId].isNil) {
+                pendingTriSinParams[cellId] = Dictionary.new;
+            };
+            pendingTriSinParams[cellId][paramKey] = paramValue;
+        };
     }
 
     rerouteTriSin { arg cellId, busVal;
@@ -487,9 +514,21 @@ Lied {
     // -----------------------------------------------------------------
 
     allocRinger { arg cellId;
+        var pending;
         if (ringerInstances[cellId].isNil) {
             ringerInstances[cellId] = Ringer.new;
-            ("Ringer allocated: " ++ cellId).postln;
+            // Apply pending param values that were set before alloc
+            pending = pendingRingerParams[cellId];
+            if (pending.notNil) {
+                pending.keysValuesDo({ |k, v|
+                    ringerInstances[cellId].setParam('all', k, v);
+                });
+                pendingRingerParams[cellId] = nil;
+                ("Ringer allocated: " ++ cellId
+                    ++ " (applied " ++ pending.size ++ " pending params)").postln;
+            } {
+                ("Ringer allocated: " ++ cellId).postln;
+            };
         }
     }
 
@@ -498,6 +537,7 @@ Lied {
         if (inst.notNil) {
             inst.free;
             ringerInstances[cellId] = nil;
+            pendingRingerParams[cellId] = nil;  // clear stale pending
             ("Ringer freed: " ++ cellId).postln;
         }
     }
@@ -513,7 +553,13 @@ Lied {
         var inst = ringerInstances[cellId];
         if (inst.notNil) {
             inst.setParam('all', paramKey, paramValue);
-        }
+        } {
+            // No instance yet — cache for when alloc happens
+            if (pendingRingerParams[cellId].isNil) {
+                pendingRingerParams[cellId] = Dictionary.new;
+            };
+            pendingRingerParams[cellId][paramKey] = paramValue;
+        };
     }
 
     rerouteRinger { arg cellId, busVal;
@@ -527,7 +573,7 @@ Lied {
 
     loadSampler { arg slot, filePath;
         fork {
-            var sf, duration, buf;
+            var sf, duration, buf, pending;
             var maxSec = 600;  // 10-minute max per unique buffer (~230 MB stereo @ 48k);
                                 // dedup means N slots referencing same file = 1 buffer cost.
             sf = SoundFile.openRead(filePath);
@@ -560,6 +606,16 @@ Lied {
                             ++ " (" ++ duration.round(0.1) ++ "s)").postln;
                     };
                     samplerInstances[slot] = Sampler.new(buf);
+                    // Apply pending params if any were set before load
+                    pending = pendingSamplerParams[slot];
+                    if (pending.notNil) {
+                        pending.keysValuesDo({ |k, v|
+                            samplerInstances[slot].setParam('all', k, v);
+                        });
+                        pendingSamplerParams[slot] = nil;
+                        ("Sampler " ++ slot ++ " loaded"
+                            ++ " (applied " ++ pending.size ++ " pending params)").postln;
+                    };
                     samplerPaths[slot] = filePath;
                 };
             };
@@ -572,6 +628,7 @@ Lied {
         if (inst.notNil) {
             inst.free;
             samplerInstances[slot] = nil;
+            pendingSamplerParams[slot] = nil;  // clear stale pending
             // Decrement buffer refcount; free buffer when no slot references it
             if (path.notNil) {
                 bufferRefCounts[path] = bufferRefCounts[path] - 1;
@@ -598,7 +655,13 @@ Lied {
         var inst = samplerInstances[slot];
         if (inst.notNil) {
             inst.setParam('all', paramKey, paramValue);
-        }
+        } {
+            // No instance yet — cache for when load happens
+            if (pendingSamplerParams[slot].isNil) {
+                pendingSamplerParams[slot] = Dictionary.new;
+            };
+            pendingSamplerParams[slot][paramKey] = paramValue;
+        };
     }
 
     rerouteSampler { arg slot, busVal;
@@ -612,7 +675,7 @@ Lied {
 
     loadOneShot { arg slot, filePath;
         fork {
-            var sf, duration, buf;
+            var sf, duration, buf, pending;
             var maxSec = 600;  // 10-minute max per unique buffer (~230 MB stereo @ 48k);
                                 // dedup means N slots referencing same file = 1 buffer cost.
             sf = SoundFile.openRead(filePath);
@@ -643,6 +706,16 @@ Lied {
                             ++ " (" ++ duration.round(0.1) ++ "s)").postln;
                     };
                     oneShotInstances[slot] = OneShot.new(buf);
+                    // Apply pending params if any were set before load
+                    pending = pendingOneShotParams[slot];
+                    if (pending.notNil) {
+                        pending.keysValuesDo({ |k, v|
+                            oneShotInstances[slot].setParam('all', k, v);
+                        });
+                        pendingOneShotParams[slot] = nil;
+                        ("OneShot " ++ slot ++ " loaded"
+                            ++ " (applied " ++ pending.size ++ " pending params)").postln;
+                    };
                     oneShotPaths[slot] = filePath;
                 };
             };
@@ -655,6 +728,7 @@ Lied {
         if (inst.notNil) {
             inst.free;
             oneShotInstances[slot] = nil;
+            pendingOneShotParams[slot] = nil;  // clear stale pending
             if (path.notNil) {
                 bufferRefCounts[path] = bufferRefCounts[path] - 1;
                 if (bufferRefCounts[path] <= 0) {
@@ -680,7 +754,13 @@ Lied {
         var inst = oneShotInstances[slot];
         if (inst.notNil) {
             inst.setParam('all', paramKey, paramValue);
-        }
+        } {
+            // No instance yet — cache for when load happens
+            if (pendingOneShotParams[slot].isNil) {
+                pendingOneShotParams[slot] = Dictionary.new;
+            };
+            pendingOneShotParams[slot][paramKey] = paramValue;
+        };
     }
 
     rerouteOneShot { arg slot, busVal;
