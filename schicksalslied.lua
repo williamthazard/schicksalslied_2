@@ -6,9 +6,9 @@
 ---grid row 3/5/7 press to assign,
 ---grid row 2/4/6/8 toggle to fire.
 ---
----K1: panic (free all sounds)
----K2: pause/resume (clock-quantized)
----K3: tap tempo
+---K1: backspace      E1: scroll history
+---K2: append history E2: global amp
+---K3: enter          E3: bpm
 ---
 ---version 2.0.0
 
