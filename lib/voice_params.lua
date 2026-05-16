@@ -585,7 +585,9 @@ function VoiceParams.add_cell_seq_mode_block(x, y)
         type = 'control',
         id = prefix .. 'scale',
         name = 'rate scale',
-        controlspec = controlspec.new(0.01, 64, 'lin', 0.01,
+        -- step + min on the same 1/16-beat grid so integer values (1, 2, 4,
+        -- 8, ...) are always exact multiples and reachable via encoder.
+        controlspec = controlspec.new(0.0625, 64, 'lin', 0.0625,
             VoiceParams._default_seq_scale(x, y), ''),
     }
     params:add{
