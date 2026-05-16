@@ -9,7 +9,7 @@ local VoiceParams = {}
 
 -- Bus routing options surface to the user. Underlying SC bus index is
 -- resolved at action time via VoiceParams.bus_idx_for.
-VoiceParams.BUS_ROUTING_OPTIONS = { 'dry', 'reverb', 'delay+reverb' }
+VoiceParams.BUS_ROUTING_OPTIONS = { 'dry', 'reverb', 'delay+reverb', 'granular' }
 
 -- Map a bus_routing option index (1..3) to the SC audio bus number.
 -- Lied.sc allocates 3 stereo buses in order: dryBus, reverbBus, delayBus.
@@ -18,9 +18,10 @@ VoiceParams.BUS_ROUTING_OPTIONS = { 'dry', 'reverb', 'delay+reverb' }
 -- the actual indices at boot so the user can verify on hardware. If the
 -- hardware values differ, update the constants below.
 function VoiceParams.bus_idx_for(routing_idx)
-    if routing_idx == 1 then return 4    -- dryBus (post output 0-1, so starts at 4 on stereo-output Norns)
+    if routing_idx == 1 then return 4     -- dryBus (post output 0-1, so starts at 4 on stereo-output Norns)
     elseif routing_idx == 2 then return 6  -- reverbBus
     elseif routing_idx == 3 then return 8  -- delayBus
+    elseif routing_idx == 4 then return 10 -- granularBus (Carter's Delay input)
     end
     return 4
 end

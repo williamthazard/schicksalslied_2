@@ -2,6 +2,8 @@
 Lied {
     var <server;
     var <dryBus, <reverbBus, <delayBus;
+    var <granularBus;          // stereo bus voices route to when bus_routing = 'granular'
+    var <granSendSynth;        // sums granularBus → micBus; lazy with granular chain
     var <voiceGroup, <fxGroup, <outGroup;
     var <delaySynth, <reverbSynth, <outSynth;
     var <beat_sec;                  // updated via setBeatSec from Lua
@@ -56,7 +58,9 @@ Lied {
         dryBus    = Bus.audio(server, 2);
         reverbBus = Bus.audio(server, 2);
         delayBus  = Bus.audio(server, 2);
-        ("Lied buses: dryBus=" ++ dryBus.index ++ " reverbBus=" ++ reverbBus.index ++ " delayBus=" ++ delayBus.index).postln;
+        granularBus = Bus.audio(server, 2);  // route voices into granular chain
+        ("Lied buses: dryBus=" ++ dryBus.index ++ " reverbBus=" ++ reverbBus.index
+            ++ " delayBus=" ++ delayBus.index ++ " granularBus=" ++ granularBus.index).postln;
 
         // --- Group hierarchy ---
         //   server default group
@@ -196,6 +200,16 @@ Lied {
             Out.ar(out, sig);
         }).add;
 
+        // Voice → granular bus → micBus send. Sums stereo voice signal to
+        // mono with 0.5 gain so the grain chain processes voice audio along
+        // with the mic input. Only audible when granular chain is allocated.
+        SynthDef(\liedGranSend, {
+            arg in = 0, out = 0;
+            var sig = In.ar(in, 2);
+            var mono = (sig[0] + sig[1]) * 0.5;
+            Out.ar(out, mono);
+        }).add;
+
         server.sync;
 
         // --- Instantiate master FX (persistent) ---
@@ -289,6 +303,9 @@ Lied {
             micSynth        = Synth(\liedMic,        [\in, 0, \out, micBus, \amp, 0],     micGrp);
             micDrySynth     = Synth(\liedMicDry,     [\in, 0, \out, dryBus, \amp, 0],     micGrp);
             fbPatchMixSynth = Synth(\liedFbPatchMix, [\in, 0, \out, micBus, \amp, 0],     micGrp, \addToHead);
+            // Voice→granular send (reads granularBus, writes to micBus).
+            // Lives in micGrp so it runs at the head of the chain.
+            granSendSynth = Synth(\liedGranSend, [\in, granularBus, \out, micBus], micGrp);
             ptrSynth        = Synth(\liedPtr,        [\buf, delayBuf, \out, ptrBus],      ptrGrp);
             recSynth        = Synth(\liedRec,        [\ptrIn, ptrBus, \micIn, micBus, \buf, delayBuf], recGrp);
 
@@ -366,6 +383,7 @@ Lied {
         granGrp.free;
         recGrp.free;
         ptrGrp.free;
+        granSendSynth = nil;  // freed by micGrp.free below
         micGrp.free;
         delayBuf.free;
         micBus.free;
@@ -800,6 +818,7 @@ Lied {
         dryBus.free;
         reverbBus.free;
         delayBus.free;
+        granularBus.free;
         "Lied freed.".postln;
     }
 }
