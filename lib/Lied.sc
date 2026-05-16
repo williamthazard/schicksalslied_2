@@ -518,15 +518,34 @@ Lied {
     // -----------------------------------------------------------------
 
     loadSampler { arg slot, filePath;
-        var buf;
         fork {
-            if (samplerInstances[slot].notNil) {
-                this.clearSampler(slot);
+            var sf, duration;
+            // 5-minute max per buffer (~115 MB stereo @ 48 kHz). Two 30-min
+            // samples (~690 MB each) crash the Norns SC server out of RAM.
+            // Adjust the 300 if your Norns has more headroom.
+            var maxSec = 300;
+            sf = SoundFile.openRead(filePath);
+            if (sf.isNil) {
+                ("Sampler " ++ slot ++ " load failed: cannot open " ++ filePath).postln;
+            } {
+                duration = sf.numFrames / sf.sampleRate;
+                sf.close;
+                if (duration > maxSec) {
+                    ("Sampler " ++ slot ++ " load REFUSED: "
+                        ++ duration.round(0.1) ++ "s exceeds "
+                        ++ maxSec ++ "s max (would exhaust Norns RAM).").postln;
+                } {
+                    var buf;
+                    if (samplerInstances[slot].notNil) {
+                        this.clearSampler(slot);
+                    };
+                    buf = Buffer.read(server, filePath);
+                    server.sync;
+                    samplerInstances[slot] = Sampler.new(buf);
+                    ("Sampler " ++ slot ++ " loaded: " ++ filePath
+                        ++ " (" ++ duration.round(0.1) ++ "s)").postln;
+                };
             };
-            buf = Buffer.read(server, filePath);
-            server.sync;
-            samplerInstances[slot] = Sampler.new(buf);
-            ("Sampler " ++ slot ++ " loaded: " ++ filePath).postln;
         };
     }
 
@@ -564,15 +583,34 @@ Lied {
     // -----------------------------------------------------------------
 
     loadOneShot { arg slot, filePath;
-        var buf;
         fork {
-            if (oneShotInstances[slot].notNil) {
-                this.clearOneShot(slot);
+            var sf, duration;
+            // 5-minute max per buffer (~115 MB stereo @ 48 kHz). Two 30-min
+            // samples (~690 MB each) crash the Norns SC server out of RAM.
+            // Adjust the 300 if your Norns has more headroom.
+            var maxSec = 300;
+            sf = SoundFile.openRead(filePath);
+            if (sf.isNil) {
+                ("OneShot " ++ slot ++ " load failed: cannot open " ++ filePath).postln;
+            } {
+                duration = sf.numFrames / sf.sampleRate;
+                sf.close;
+                if (duration > maxSec) {
+                    ("OneShot " ++ slot ++ " load REFUSED: "
+                        ++ duration.round(0.1) ++ "s exceeds "
+                        ++ maxSec ++ "s max (would exhaust Norns RAM).").postln;
+                } {
+                    var buf;
+                    if (oneShotInstances[slot].notNil) {
+                        this.clearOneShot(slot);
+                    };
+                    buf = Buffer.read(server, filePath);
+                    server.sync;
+                    oneShotInstances[slot] = OneShot.new(buf);
+                    ("OneShot " ++ slot ++ " loaded: " ++ filePath
+                        ++ " (" ++ duration.round(0.1) ++ "s)").postln;
+                };
             };
-            buf = Buffer.read(server, filePath);
-            server.sync;
-            oneShotInstances[slot] = OneShot.new(buf);
-            ("OneShot " ++ slot ++ " loaded: " ++ filePath).postln;
         };
     }
 
