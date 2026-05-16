@@ -6,7 +6,7 @@
 ---grid row 3/5/7 press to assign,
 ---grid row 2/4/6/8 toggle to fire.
 ---
----K1: backspace      E1: scroll history
+---K1: (unused)       E1: scroll history
 ---K2: append history E2: global amp
 ---K3: enter          E3: bpm
 ---
@@ -286,7 +286,7 @@ function redraw()
 end
 
 -- ========================================================================
--- HARDWARE KEYS (K1 / K2 / K3 — spec §11)
+-- HARDWARE KEYS (K2 / K3 — K1 reserved for Norns system back/menu)
 -- ========================================================================
 
 local function panic()
@@ -333,15 +333,10 @@ end
 
 function key(n, z)
     if z == 0 then return end  -- act on press, not release
+    -- K1 is intentionally unhandled — Norns's system-level hold-K1-to-exit
+    -- behavior is preserved; short-press K1 does nothing in this script.
 
-    if n == 1 then
-        -- K1: backspace — delete last char of displayed_string
-        if #displayed_string > 0 then
-            displayed_string = displayed_string:sub(1, -2)
-            grid_dirty = true
-        end
-
-    elseif n == 2 then
+    if n == 2 then
         -- K2: append the currently-selected history line to displayed_string.
         -- Mirrors the row-1 grid press semantics. history_index is updated by E1.
         if #history > 0 and history_index >= 1 and history_index <= #history then
