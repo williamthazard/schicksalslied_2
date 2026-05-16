@@ -9,6 +9,10 @@ Lied {
     var <ringerInstances;           // Dictionary: cell_id (Symbol) → Ringer instance
     var <samplerInstances;          // Dictionary: slot (Integer)  → Sampler instance
     var <oneShotInstances;          // Dictionary: slot (Integer)  → OneShot instance
+    var <bufferCache;               // Dictionary: filePath (String) → Buffer
+    var <bufferRefCounts;           // Dictionary: filePath → Integer (# slots using it)
+    var <samplerPaths;              // Dictionary: slot (Integer) → filePath (for refcount maintenance)
+    var <oneShotPaths;              // Dictionary: slot → filePath
 
     // Granular delay state
     var <delayBuf, <micBus, <ptrBus;
@@ -31,6 +35,10 @@ Lied {
         ringerInstances  = Dictionary.new;
         samplerInstances = Dictionary.new;
         oneShotInstances = Dictionary.new;
+        bufferCache      = Dictionary.new;
+        bufferRefCounts  = Dictionary.new;
+        samplerPaths     = Dictionary.new;
+        oneShotPaths     = Dictionary.new;
         "Lied init: allocating buses + master FX...".postln;
 
         // --- Audio buses ---
@@ -519,11 +527,9 @@ Lied {
 
     loadSampler { arg slot, filePath;
         fork {
-            var sf, duration;
-            // 5-minute max per buffer (~115 MB stereo @ 48 kHz). Two 30-min
-            // samples (~690 MB each) crash the Norns SC server out of RAM.
-            // Adjust the 300 if your Norns has more headroom.
-            var maxSec = 300;
+            var sf, duration, buf;
+            var maxSec = 600;  // 10-minute max per unique buffer (~230 MB stereo @ 48k);
+                                // dedup means N slots referencing same file = 1 buffer cost.
             sf = SoundFile.openRead(filePath);
             if (sf.isNil) {
                 ("Sampler " ++ slot ++ " load failed: cannot open " ++ filePath).postln;
@@ -535,15 +541,26 @@ Lied {
                         ++ duration.round(0.1) ++ "s exceeds "
                         ++ maxSec ++ "s max (would exhaust Norns RAM).").postln;
                 } {
-                    var buf;
+                    // Clear existing slot first (handles refcount for previous file)
                     if (samplerInstances[slot].notNil) {
                         this.clearSampler(slot);
                     };
-                    buf = Buffer.read(server, filePath);
-                    server.sync;
+                    // Reuse cached buffer if this path is already loaded
+                    buf = bufferCache[filePath];
+                    if (buf.notNil) {
+                        bufferRefCounts[filePath] = bufferRefCounts[filePath] + 1;
+                        ("Sampler " ++ slot ++ " reusing cached buffer: " ++ filePath
+                            ++ " (refs=" ++ bufferRefCounts[filePath] ++ ")").postln;
+                    } {
+                        buf = Buffer.read(server, filePath);
+                        server.sync;
+                        bufferCache[filePath] = buf;
+                        bufferRefCounts[filePath] = 1;
+                        ("Sampler " ++ slot ++ " loaded new buffer: " ++ filePath
+                            ++ " (" ++ duration.round(0.1) ++ "s)").postln;
+                    };
                     samplerInstances[slot] = Sampler.new(buf);
-                    ("Sampler " ++ slot ++ " loaded: " ++ filePath
-                        ++ " (" ++ duration.round(0.1) ++ "s)").postln;
+                    samplerPaths[slot] = filePath;
                 };
             };
         };
@@ -551,12 +568,23 @@ Lied {
 
     clearSampler { arg slot;
         var inst = samplerInstances[slot];
+        var path = samplerPaths[slot];
         if (inst.notNil) {
-            inst.buffer.free;
             inst.free;
             samplerInstances[slot] = nil;
+            // Decrement buffer refcount; free buffer when no slot references it
+            if (path.notNil) {
+                bufferRefCounts[path] = bufferRefCounts[path] - 1;
+                if (bufferRefCounts[path] <= 0) {
+                    bufferCache[path].free;
+                    bufferCache[path] = nil;
+                    bufferRefCounts[path] = nil;
+                    ("Buffer freed: " ++ path).postln;
+                };
+                samplerPaths[slot] = nil;
+            };
             ("Sampler " ++ slot ++ " cleared").postln;
-        }
+        };
     }
 
     triggerSampler { arg slot, voiceKey, startPos, endPos, rate;
@@ -584,11 +612,9 @@ Lied {
 
     loadOneShot { arg slot, filePath;
         fork {
-            var sf, duration;
-            // 5-minute max per buffer (~115 MB stereo @ 48 kHz). Two 30-min
-            // samples (~690 MB each) crash the Norns SC server out of RAM.
-            // Adjust the 300 if your Norns has more headroom.
-            var maxSec = 300;
+            var sf, duration, buf;
+            var maxSec = 600;  // 10-minute max per unique buffer (~230 MB stereo @ 48k);
+                                // dedup means N slots referencing same file = 1 buffer cost.
             sf = SoundFile.openRead(filePath);
             if (sf.isNil) {
                 ("OneShot " ++ slot ++ " load failed: cannot open " ++ filePath).postln;
@@ -600,15 +626,24 @@ Lied {
                         ++ duration.round(0.1) ++ "s exceeds "
                         ++ maxSec ++ "s max (would exhaust Norns RAM).").postln;
                 } {
-                    var buf;
                     if (oneShotInstances[slot].notNil) {
                         this.clearOneShot(slot);
                     };
-                    buf = Buffer.read(server, filePath);
-                    server.sync;
+                    buf = bufferCache[filePath];
+                    if (buf.notNil) {
+                        bufferRefCounts[filePath] = bufferRefCounts[filePath] + 1;
+                        ("OneShot " ++ slot ++ " reusing cached buffer: " ++ filePath
+                            ++ " (refs=" ++ bufferRefCounts[filePath] ++ ")").postln;
+                    } {
+                        buf = Buffer.read(server, filePath);
+                        server.sync;
+                        bufferCache[filePath] = buf;
+                        bufferRefCounts[filePath] = 1;
+                        ("OneShot " ++ slot ++ " loaded new buffer: " ++ filePath
+                            ++ " (" ++ duration.round(0.1) ++ "s)").postln;
+                    };
                     oneShotInstances[slot] = OneShot.new(buf);
-                    ("OneShot " ++ slot ++ " loaded: " ++ filePath
-                        ++ " (" ++ duration.round(0.1) ++ "s)").postln;
+                    oneShotPaths[slot] = filePath;
                 };
             };
         };
@@ -616,12 +651,22 @@ Lied {
 
     clearOneShot { arg slot;
         var inst = oneShotInstances[slot];
+        var path = oneShotPaths[slot];
         if (inst.notNil) {
-            inst.buffer.free;
             inst.free;
             oneShotInstances[slot] = nil;
+            if (path.notNil) {
+                bufferRefCounts[path] = bufferRefCounts[path] - 1;
+                if (bufferRefCounts[path] <= 0) {
+                    bufferCache[path].free;
+                    bufferCache[path] = nil;
+                    bufferRefCounts[path] = nil;
+                    ("Buffer freed: " ++ path).postln;
+                };
+                oneShotPaths[slot] = nil;
+            };
             ("OneShot " ++ slot ++ " cleared").postln;
-        }
+        };
     }
 
     triggerOneShot { arg slot, voiceKey, rate;
