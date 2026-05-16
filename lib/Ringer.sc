@@ -23,7 +23,9 @@ Ringer {
                         freq_slew,
                         amp_slew,
                         pan_slew,
-                        bus;
+                        bus,
+                        gran_bus = 0,
+                        granular_send = 0;
 
                     var envelope = EnvGen.kr(
                         envelope: Env.perc(
@@ -48,17 +50,22 @@ Ringer {
                         pan.lag3(pan_slew)
                     );
 
+                    // Granular send: parallel copy to granular chain at independent level.
+                    // Uses signal (post-pan) but BEFORE amp scaling, so amp=0 + granular_send=1
+                    // gives "granular only" routing without killing the granular signal.
+                    Out.ar(gran_bus, signal * granular_send.lag3(0.05));
+
                     Out.ar(bus, signal * amp.lag3(amp_slew));
                 }).add;
             }
         }
     }
 
-    *new {
-        ^super.new.init;
+    *new { arg granularBusIdx;
+        ^super.new.init(granularBusIdx);
     }
 
-    init {
+    init { arg granularBusIdx;
         var s = Server.default;
 
         voiceGroup = Group.new(s);
@@ -71,7 +78,9 @@ Ringer {
             \freq_slew, 0,
             \amp_slew, 0.05,
             \pan_slew, 0.5,
-            \bus, 0;
+            \bus, 0,
+            \gran_bus, granularBusIdx ? 0,
+            \granular_send, 0;
         ]);
         singleVoices = Dictionary.new;
         voiceParams = Dictionary.new;

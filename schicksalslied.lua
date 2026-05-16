@@ -712,10 +712,11 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
-    -- ROW-2 CELLS GROUP (16 cells × 41 params + 1 separator/cell + 4 bulk = 660)
-    -- Each cell: 1 separator + 1 role + 14 seq_mode + 6 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 41
+    -- ROW-2 CELLS GROUP (16 cells × 42 params + 1 separator/cell + 4 bulk = 692)
+    -- Each cell: 1 separator + 1 role + 14 seq_mode + 7 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 42
+    -- shared: amp, amp_slew, pan, pan_slew, polyphony, bus_routing, granular_send
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'synths', 16 * 42 + 4)
+    params:add_group('row_2_cells', 'synths', 16 * 43 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
@@ -763,12 +764,14 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- LOOPING SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 9 voice + 1 trigger-cell sep + 14 trigger seq_mode
+    -- Each slot: 1 separator + 1 file + 10 voice + 1 trigger-cell sep + 14 trigger seq_mode
     --            + 13 position value_mode + 13 duration value_mode
-    --            + 1 rate-cell sep + 14 rate seq_mode + 13 rate value_mode = 80
-    -- 16 slots × 80 + 4 bulk triggers = 1284
+    --            + 1 rate-cell sep + 14 rate seq_mode + 13 rate value_mode = 81
+    -- voice: amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony, bus_routing,
+    --        granular_send, randomize = 10
+    -- 16 slots × 81 + 4 bulk triggers = 1300
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('samplers', 'looping samplers', 16 * 80 + 4)
+    params:add_group('samplers', 'looping samplers', 16 * 81 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 16 do
@@ -866,10 +869,12 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- ONE-SHOT SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 9 voice + 14 seq_mode + 13 rate value_mode = 38
-    -- 13 slots × 38 + 2 bulk triggers = 496
+    -- Each slot: 1 separator + 1 file + 10 voice + 14 seq_mode + 13 rate value_mode = 39
+    -- voice: amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony, bus_routing,
+    --        granular_send, randomize = 10
+    -- 13 slots × 39 + 2 bulk triggers = 509
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 38 + 2)
+    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 39 + 2)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 13 do

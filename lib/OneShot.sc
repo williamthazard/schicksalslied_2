@@ -31,11 +31,18 @@ OneShot {
                         pan = 0,
                         pan_slew = 0.5,
                         buf = 0,
-                        bus = 0;
+                        bus = 0,
+                        gran_bus = 0,
+                        granular_send = 0;
 
                     var sig = PlayBuf.ar(1, buf, BufRateScale.ir(buf) * rate, t_gate);
                     var filter = MoogFF.ar(sig, cutoff.lag3(cutoff_slew), resonance);
                     var signal = Pan2.ar(filter, pan.lag3(pan_slew));
+
+                    // Granular send: parallel copy to granular chain at independent level.
+                    // Uses signal (post-pan) but BEFORE amp scaling, so amp=0 + granular_send=1
+                    // gives "granular only" routing without killing the granular signal.
+                    Out.ar(gran_bus, signal * granular_send.lag3(0.05));
 
                     // Single amp multiplication with .lag3 for click-free
                     // real-time control. No doneAction:2 — synth is persistent.
@@ -45,11 +52,11 @@ OneShot {
         }
     }
 
-    *new { arg buf;
-        ^super.new.init(buf);
+    *new { arg buf, granularBusIdx;
+        ^super.new.init(buf, granularBusIdx);
     }
 
-    init { arg buf;
+    init { arg buf, granularBusIdx;
         var s = Server.default;
 
         buffer = buf;
@@ -65,7 +72,9 @@ OneShot {
             \pan_slew, 0.5,
             \buf, buf.bufnum,
             \rate, 1,
-            \bus, 0;
+            \bus, 0,
+            \gran_bus, granularBusIdx ? 0,
+            \granular_send, 0;
         ]);
         singleVoices = Dictionary.new;
         voiceParams = Dictionary.new;

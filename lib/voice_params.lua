@@ -9,7 +9,7 @@ local VoiceParams = {}
 
 -- Bus routing options surface to the user. Underlying SC bus index is
 -- resolved at action time via VoiceParams.bus_idx_for.
-VoiceParams.BUS_ROUTING_OPTIONS = { 'dry', 'reverb', 'delay+reverb', 'granular' }
+VoiceParams.BUS_ROUTING_OPTIONS = { 'dry', 'reverb', 'delay+reverb' }
 
 -- Map a bus_routing option index (1..3) to the SC audio bus number.
 -- Lied.sc allocates 3 stereo buses in order: dryBus, reverbBus, delayBus.
@@ -17,11 +17,13 @@ VoiceParams.BUS_ROUTING_OPTIONS = { 'dry', 'reverb', 'delay+reverb', 'granular' 
 -- allocation order. We hardcode the expected triplet here; Lied.sc prints
 -- the actual indices at boot so the user can verify on hardware. If the
 -- hardware values differ, update the constants below.
+-- Granular routing is now a separate parallel send (granular_send param per
+-- voice) rather than a bus_routing option — voices can feed both destinations
+-- simultaneously at independent levels.
 function VoiceParams.bus_idx_for(routing_idx)
     if routing_idx == 1 then return 4     -- dryBus (post output 0-1, so starts at 4 on stereo-output Norns)
     elseif routing_idx == 2 then return 6  -- reverbBus
     elseif routing_idx == 3 then return 8  -- delayBus
-    elseif routing_idx == 4 then return 10 -- granularBus (Carter's Delay input)
     end
     return 4
 end
@@ -106,6 +108,13 @@ function VoiceParams.add_sampler_block(slot)
         end,
     }
     params:add{
+        type = 'control',
+        id = 'sampler_' .. slot .. '_granular_send',
+        name = 'sampler ' .. slot .. ' granular send',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0, ''),
+        action = function(v) engine.sampler_set_param(slot, 'granular_send', v) end,
+    }
+    params:add{
         type = 'trigger',
         id = 'sampler_' .. slot .. '_randomize',
         name = 'sampler ' .. slot .. ' randomize',
@@ -187,6 +196,13 @@ function VoiceParams.add_oneshot_block(slot)
         action = function(routing_idx)
             engine.oneshot_reroute(slot, VoiceParams.bus_idx_for(routing_idx))
         end,
+    }
+    params:add{
+        type = 'control',
+        id = 'oneshot_' .. slot .. '_granular_send',
+        name = 'one-shot ' .. slot .. ' granular send',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0, ''),
+        action = function(v) engine.oneshot_set_param(slot, 'granular_send', v) end,
     }
     params:add{
         type = 'trigger',
@@ -305,6 +321,13 @@ function VoiceParams.add_row2_cell_block(x)
                 engine.ringer_reroute(cell_id, bus_idx)
             end
         end,
+    }
+    params:add{
+        type = 'control',
+        id = 'cell_' .. x .. '_2_granular_send',
+        name = 'cell ' .. x .. ' granular send',
+        controlspec = cs.new(0, 1, 'lin', 0.01, 0, ''),
+        action = function(v) VoiceParams._set_cell_param(x, 'granular_send', v) end,
     }
 
     -- ── Pitch offset (semitones, applied before scale quantization) ──
@@ -515,7 +538,7 @@ function VoiceParams._update_row2_visibility(x, role)
     }
     local ringer_only = { 'decay' }
     local midi_only = { 'midi_channel' }
-    local shared = { 'amp', 'amp_slew', 'pan', 'pan_slew', 'polyphony', 'bus_routing' }
+    local shared = { 'amp', 'amp_slew', 'pan', 'pan_slew', 'polyphony', 'bus_routing', 'granular_send' }
 
     local prefix = 'cell_' .. x .. '_2_'
     local function show_or_hide(list, show)

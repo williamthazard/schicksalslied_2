@@ -476,7 +476,7 @@ Lied {
     allocTriSin { arg cellId;
         var pending;
         if (triSinInstances[cellId].isNil) {
-            triSinInstances[cellId] = TriSin.new;
+            triSinInstances[cellId] = TriSin.new(granularBus.index);
             // Apply pending param values that were set before alloc
             pending = pendingTriSinParams[cellId];
             if (pending.notNil) {
@@ -534,7 +534,7 @@ Lied {
     allocRinger { arg cellId;
         var pending;
         if (ringerInstances[cellId].isNil) {
-            ringerInstances[cellId] = Ringer.new;
+            ringerInstances[cellId] = Ringer.new(granularBus.index);
             // Apply pending param values that were set before alloc
             pending = pendingRingerParams[cellId];
             if (pending.notNil) {
@@ -623,7 +623,7 @@ Lied {
                         ("Sampler " ++ slot ++ " loaded new buffer: " ++ filePath
                             ++ " (" ++ duration.round(0.1) ++ "s)").postln;
                     };
-                    samplerInstances[slot] = Sampler.new(buf);
+                    samplerInstances[slot] = Sampler.new(buf, granularBus.index);
                     // Apply pending params if any were set before load
                     pending = pendingSamplerParams[slot];
                     if (pending.notNil) {
@@ -723,7 +723,7 @@ Lied {
                         ("OneShot " ++ slot ++ " loaded new buffer: " ++ filePath
                             ++ " (" ++ duration.round(0.1) ++ "s)").postln;
                     };
-                    oneShotInstances[slot] = OneShot.new(buf);
+                    oneShotInstances[slot] = OneShot.new(buf, granularBus.index);
                     // Apply pending params if any were set before load
                     pending = pendingOneShotParams[slot];
                     if (pending.notNil) {
