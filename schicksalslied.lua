@@ -38,8 +38,6 @@ local g = grid.connect()
 -- Metro handles — declared here so both init() and cleanup() can see them.
 local screen_metro, grid_metro, fire_decay_metro
 
--- K1/K2/K3 state for tap-tempo
-local tap_tempo_times = {}
 
 -- grid_dirty stays a global (sequencer.lua's toggle_pause writes to it)
 grid_dirty = true
@@ -291,32 +289,6 @@ end
 -- HARDWARE KEYS (K1 / K2 / K3 — spec §11)
 -- ========================================================================
 
-local function tap_tempo()
-    local now = util.time()
-    -- If the last tap was more than 3 seconds ago, start fresh
-    if #tap_tempo_times > 0 and (now - tap_tempo_times[#tap_tempo_times]) > 3 then
-        tap_tempo_times = {}
-    end
-    table.insert(tap_tempo_times, now)
-    if #tap_tempo_times > 4 then
-        table.remove(tap_tempo_times, 1)
-    end
-    if #tap_tempo_times >= 2 then
-        local intervals = {}
-        for i = 2, #tap_tempo_times do
-            table.insert(intervals, tap_tempo_times[i] - tap_tempo_times[i - 1])
-        end
-        local avg = 0
-        for _, v in ipairs(intervals) do avg = avg + v end
-        avg = avg / #intervals
-        local bpm = 60 / avg
-        bpm = util.clamp(bpm, 20, 400)
-        bpm = math.floor(bpm + 0.5)  -- round to nearest integer
-        params:set('clock_tempo', bpm)
-        print(string.format('tap tempo: %d bpm', bpm))
-    end
-end
-
 local function panic()
     -- Clear all toggle state so the sequencer stops dispatching
     for x = 1, 16 do
@@ -442,7 +414,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- GLOBAL GROUP (spec §9)
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('global', 'global', 10)
+    params:add_group('global', 'global', 9)
 
     params:add{
         type = 'file',
@@ -461,12 +433,6 @@ local function add_params()
         id = 'pause_resume',
         name = 'pause / resume',
         action = function() Sequencer.toggle_pause(); grid_dirty = true; end,
-    }
-    params:add{
-        type = 'trigger',
-        id = 'tap_tempo_param',
-        name = 'tap tempo',
-        action = tap_tempo,
     }
     params:add{
         type = 'trigger',
