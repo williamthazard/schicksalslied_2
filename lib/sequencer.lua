@@ -262,7 +262,10 @@ function Sequencer.get_rate(x, y)
             if pat then return pat() end
             return 1
         elseif sm.mode == 'random' then
-            return math.random(sm.random_min or 1, sm.random_max or 16)
+            -- random bounds may be non-integer; use float-safe form
+            local lo = sm.random_min or 1
+            local hi = sm.random_max or 16
+            return math.random() * (hi - lo) + lo
         end
         return 1
     end
@@ -282,9 +285,12 @@ function Sequencer.get_rate(x, y)
     elseif mode_idx == 3 then  -- user_seq
         return Sequencer._user_seq_step(x, y)
     elseif mode_idx == 4 then  -- random
-        return math.random(
-            params:get(prefix .. 'random_min') or 1,
-            params:get(prefix .. 'random_max') or 16)
+        -- random_min/max controlspecs are floats (beats, exp 0.0625..16/64),
+        -- so use math.random() + scale rather than math.random(lo, hi) which
+        -- requires integer args.
+        local lo = params:get(prefix .. 'random_min') or 1
+        local hi = params:get(prefix .. 'random_max') or 16
+        return math.random() * (hi - lo) + lo
     end
     return 1
 end
