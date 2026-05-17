@@ -19,6 +19,7 @@ local Roles      = include 'lib/cell_roles'
 local MusicUtil  = require 'musicutil'
 local Midi       = include 'lib/midi_role'
 local Grain      = include 'lib/grid_grain_params'
+local MidiInput  = include 'lib/midi_input'
 
 -- ========================================================================
 -- MODULE-LEVEL LOCALS — text input + history
@@ -610,6 +611,170 @@ local function add_params()
         id = 'midi_gate_time',
         name = 'midi gate time',
         controlspec = controlspec.new(0.01, 5, 'exp', 0.001, 0.1, 's'),
+    }
+
+    -- ────────────────────────────────────────────────────────────────────
+    -- MIDI INPUT GROUP (keyboard plays a separate TriSin or Ringer voice)
+    -- ────────────────────────────────────────────────────────────────────
+    -- Counts: 3 setup (device, channel, role)
+    --       + 8 shared (amp, amp_slew, pan, pan_slew, dry_send, reverb_send, delay_send, granular_send)
+    --       + 16 TriSin-only (FM ratios + index/iscale, attack/release + curves, fm env ×4, cutoff, cutoff_env, resonance, freq_slew)
+    --       + 1 Ringer-only (decay)
+    -- Total: 28
+    params:add_group('midi_input', 'midi input', 28)
+
+    params:add{
+        type = 'option',
+        id = 'midi_input_device',
+        name = 'midi in device',
+        options = MidiInput.build_device_list(),
+        default = 1,
+        action = function(n) MidiInput.connect_device(n) end,
+    }
+    params:add{
+        type = 'number',
+        id = 'midi_input_channel',
+        name = 'midi in channel (0=omni)',
+        min = 0, max = 16, default = 0,
+    }
+    params:add{
+        type = 'option',
+        id = 'midi_input_role',
+        name = 'midi in role',
+        options = { 'TriSin', 'Ringer' },
+        default = 1,
+        action = function(idx) MidiInput.set_role(idx) end,
+    }
+
+    -- Shared voice params (apply to both TriSin and Ringer)
+    params:add{
+        type = 'control', id = 'midi_input_amp', name = 'midi in amp',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'amp', v); engine.ringer_set_param(MidiInput.CELL_ID, 'amp', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_amp_slew', name = 'midi in amp slew',
+        controlspec = controlspec.new(0, 5, 'lin', 0.01, 0.05, 's'),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'amp_slew', v); engine.ringer_set_param(MidiInput.CELL_ID, 'amp_slew', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_pan', name = 'midi in pan',
+        controlspec = controlspec.new(-1, 1, 'lin', 0.01, 0, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'pan', v); engine.ringer_set_param(MidiInput.CELL_ID, 'pan', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_pan_slew', name = 'midi in pan slew',
+        controlspec = controlspec.new(0, 5, 'lin', 0.01, 0.5, 's'),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'pan_slew', v); engine.ringer_set_param(MidiInput.CELL_ID, 'pan_slew', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_dry_send', name = 'midi in dry send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 1, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'dry_send', v); engine.ringer_set_param(MidiInput.CELL_ID, 'dry_send', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_reverb_send', name = 'midi in reverb send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'reverb_send', v); engine.ringer_set_param(MidiInput.CELL_ID, 'reverb_send', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_delay_send', name = 'midi in delay send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'delay_send', v); engine.ringer_set_param(MidiInput.CELL_ID, 'delay_send', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_granular_send', name = 'midi in granular send',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'granular_send', v); engine.ringer_set_param(MidiInput.CELL_ID, 'granular_send', v) end,
+    }
+
+    -- TriSin-only params (no-op on Ringer instance, but harmless via pending cache)
+    params:add{
+        type = 'control', id = 'midi_input_fm_carrier_ratio', name = 'midi in fm carrier ratio',
+        controlspec = controlspec.new(0.1, 16, 'lin', 0.01, 1, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'cRatio', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_fm_modulator_ratio', name = 'midi in fm modulator ratio',
+        controlspec = controlspec.new(0.1, 16, 'lin', 0.01, 1, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'mRatio', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_fm_index', name = 'midi in fm index',
+        controlspec = controlspec.new(0, 20, 'lin', 0.01, 1, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'index', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_fm_iscale', name = 'midi in fm iScale',
+        controlspec = controlspec.new(0.1, 20, 'lin', 0.01, 5, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'iScale', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_attack', name = 'midi in attack',
+        controlspec = controlspec.new(0, 5, 'lin', 0.01, 0, 's'),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'attack', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_release', name = 'midi in release',
+        controlspec = controlspec.new(0, 10, 'lin', 0.01, 0.4, 's'),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'release', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_attack_curve', name = 'midi in attack curve',
+        controlspec = controlspec.new(-10, 10, 'lin', 0.1, 4, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'cAtk', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_release_curve', name = 'midi in release curve',
+        controlspec = controlspec.new(-10, 10, 'lin', 0.1, -4, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'cRel', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_fm_env_attack', name = 'midi in fm env attack',
+        controlspec = controlspec.new(0, 5, 'lin', 0.01, 0, 's'),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'iattack', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_fm_env_release', name = 'midi in fm env release',
+        controlspec = controlspec.new(0, 10, 'lin', 0.01, 0.4, 's'),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'irelease', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_fm_env_attack_curve', name = 'midi in fm env atk curve',
+        controlspec = controlspec.new(-10, 10, 'lin', 0.1, 4, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'ciAtk', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_fm_env_release_curve', name = 'midi in fm env rel curve',
+        controlspec = controlspec.new(-10, 10, 'lin', 0.1, -4, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'ciRel', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_cutoff', name = 'midi in cutoff',
+        controlspec = controlspec.new(20, 18000, 'exp', 1, 8000, 'Hz'),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'cutoff', v) end,
+    }
+    params:add{
+        type = 'number', id = 'midi_input_cutoff_env', name = 'midi in cutoff env',
+        min = 0, max = 1, default = 1,
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'cutoff_env', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_resonance', name = 'midi in resonance',
+        controlspec = controlspec.new(0, 4, 'lin', 0.01, 3, ''),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'resonance', v) end,
+    }
+    params:add{
+        type = 'control', id = 'midi_input_freq_slew', name = 'midi in freq slew',
+        controlspec = controlspec.new(0, 5, 'lin', 0.01, 0, 's'),
+        action = function(v) engine.trisin_set_param(MidiInput.CELL_ID, 'freq_slew', v) end,
+    }
+
+    -- Ringer-only param
+    params:add{
+        type = 'control', id = 'midi_input_decay', name = 'midi in decay',
+        controlspec = controlspec.new(0.1, 20, 'lin', 0.01, 3, ''),
+        action = function(v) engine.ringer_set_param(MidiInput.CELL_ID, 'index', v) end,
     }
 
     -- ────────────────────────────────────────────────────────────────────
