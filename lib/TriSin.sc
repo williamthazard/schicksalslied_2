@@ -37,11 +37,10 @@ TriSin {
                         freq_slew,
                         amp_slew,
                         pan_slew,
-                        bus,
-                        gran_bus = 0,
-                        granular_send = 0;
+                        dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
+                        dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 
-                    var car, mod, envelope, iEnv, filter, signal;
+                    var car, mod, envelope, iEnv, filter, signal, ampSig;
                     var slewed_freq = freq.lag3(freq_slew);
 
                     envelope = EnvGen.kr(
@@ -74,23 +73,22 @@ TriSin {
                         pan.lag3(pan_slew)
                     );
 
-                    // Granular send: parallel copy to granular chain at independent level.
-                    // Uses signal (post-pan) but BEFORE amp scaling, so amp=0 + granular_send=1
-                    // gives "granular only" routing without killing the granular signal.
-                    Out.ar(gran_bus, signal * granular_send.lag3(0.05));
-
-                    // .lag3 on amp for click-free real-time amp control
-                    Out.ar(bus, signal * amp.lag3(amp_slew));
+                    // Post-fader: amp scales all 4 sends
+                    ampSig = amp.lag3(amp_slew);
+                    Out.ar(dry_bus,    signal * ampSig * dry_send.lag3(0.05));
+                    Out.ar(reverb_bus, signal * ampSig * reverb_send.lag3(0.05));
+                    Out.ar(delay_bus,  signal * ampSig * delay_send.lag3(0.05));
+                    Out.ar(gran_bus,   signal * ampSig * granular_send.lag3(0.05));
                 }).add;
             }
         }
     }
 
-    *new { arg granularBusIdx;
-        ^super.new.init(granularBusIdx);
+    *new { arg dryBusIdx, reverbBusIdx, delayBusIdx, granularBusIdx;
+        ^super.new.init(dryBusIdx, reverbBusIdx, delayBusIdx, granularBusIdx);
     }
 
-    init { arg granularBusIdx;
+    init { arg dryBusIdx, reverbBusIdx, delayBusIdx, granularBusIdx;
         var s = Server.default;
 
         voiceGroup = Group.new(s);
@@ -117,9 +115,14 @@ TriSin {
             \freq_slew, 0,
             \amp_slew, 0.05,
             \pan_slew, 0.5,
-            \bus, 0,
+            \dry_bus, dryBusIdx ? 0,
+            \reverb_bus, reverbBusIdx ? 0,
+            \delay_bus, delayBusIdx ? 0,
             \gran_bus, granularBusIdx ? 0,
-            \granular_send, 0;
+            \dry_send, 1,
+            \reverb_send, 0,
+            \delay_send, 0,
+            \granular_send, 0,
         ]);
         singleVoices = Dictionary.new;
         voiceParams = Dictionary.new;
@@ -174,25 +177,6 @@ TriSin {
             });
         }, {
             this.adjustVoice(voiceKey, paramKey, paramValue);
-        });
-    }
-
-    // Free voice subgroups + update voiceParams[*][\bus] so the next trigger
-    // allocates fresh with the new output bus. Needed because Out.ar samples
-    // \bus at construction; .set on a running synth updates the control value
-    // but doesn't reroute audio. We use the same free+recreate pattern as
-    // resetVoices: simply calling freeAll would leave the subgroup Group node
-    // alive (isPlaying returns true), routing the next trigger into the
-    // re-trigger branch instead of fresh-allocate.
-    reroute {
-        arg busVal;
-        var s = Server.default;
-        voiceKeys.do({ arg vK;
-            voiceParams[vK][\bus] = busVal;
-            if (singleVoices[vK].notNil) {
-                singleVoices[vK].free;
-            };
-            singleVoices[vK] = Group.new(voiceGroup);
         });
     }
 

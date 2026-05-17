@@ -641,7 +641,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- MASTER FX GROUP — delay + reverb controls
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('master_fx', 'master fx', 7)
+    params:add_group('master_fx', 'master fx', 8)
 
     params:add{
         type = 'option',
@@ -691,6 +691,13 @@ local function add_params()
     }
     params:add{
         type = 'control',
+        id = 'delay_to_reverb_send',
+        name = 'delay to reverb send',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 1, ''),
+        action = function(v) engine.set_delay_to_reverb_send(v) end,
+    }
+    params:add{
+        type = 'control',
         id = 'reverb_room',
         name = 'reverb room',
         controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.5, ''),
@@ -712,11 +719,11 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
-    -- ROW-2 CELLS GROUP (16 cells × 42 params + 1 separator/cell + 4 bulk = 692)
-    -- Each cell: 1 separator + 1 role + 14 seq_mode + 7 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 42
-    -- shared: amp, amp_slew, pan, pan_slew, polyphony, bus_routing, granular_send
+    -- ROW-2 CELLS GROUP (16 cells × 44 params + 1 separator/cell + 4 bulk = 724)
+    -- Each cell: 1 separator + 1 role + 14 seq_mode + 9 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 44
+    -- shared: amp, amp_slew, pan, pan_slew, polyphony, dry_send, reverb_send, delay_send, granular_send
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'synths', 16 * 43 + 4)
+    params:add_group('row_2_cells', 'synths', 16 * 45 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
@@ -764,14 +771,14 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- LOOPING SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 10 voice + 1 trigger-cell sep + 14 trigger seq_mode
+    -- Each slot: 1 separator + 1 file + 12 voice + 1 trigger-cell sep + 14 trigger seq_mode
     --            + 13 position value_mode + 13 duration value_mode
-    --            + 1 rate-cell sep + 14 rate seq_mode + 13 rate value_mode = 81
-    -- voice: amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony, bus_routing,
-    --        granular_send, randomize = 10
-    -- 16 slots × 81 + 4 bulk triggers = 1300
+    --            + 1 rate-cell sep + 14 rate seq_mode + 13 rate value_mode = 83
+    -- voice: amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
+    --        dry_send, reverb_send, delay_send, granular_send, randomize = 12
+    -- 16 slots × 83 + 4 bulk triggers = 1332
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('samplers', 'looping samplers', 16 * 81 + 4)
+    params:add_group('samplers', 'looping samplers', 16 * 83 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 16 do
@@ -869,12 +876,12 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- ONE-SHOT SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 10 voice + 14 seq_mode + 13 rate value_mode = 39
-    -- voice: amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony, bus_routing,
-    --        granular_send, randomize = 10
-    -- 13 slots × 39 + 2 bulk triggers = 509
+    -- Each slot: 1 separator + 1 file + 12 voice + 14 seq_mode + 13 rate value_mode = 41
+    -- voice: amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
+    --        dry_send, reverb_send, delay_send, granular_send, randomize = 12
+    -- 13 slots × 41 + 2 bulk triggers = 535
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 39 + 2)
+    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 41 + 2)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 13 do

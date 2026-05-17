@@ -82,12 +82,12 @@ Lied {
         // own terminology and avoids confusing the Lua-side param wiring later.
         SynthDef(\liedDelay, {
             arg inBus, dryOut, reverbOut, delayTime = 0.3, decayTime = 0.5,
-                amp = 1.0, amp_slew = 0.1;
+                amp = 1.0, amp_slew = 0.1, to_reverb_send = 1;
             var sig = In.ar(inBus, 2);
             var del = CombL.ar(sig, 2.0, delayTime, decayTime);
             var ampSmoothed = amp.lag(amp_slew);
             Out.ar(dryOut,    del * ampSmoothed);
-            Out.ar(reverbOut, del * ampSmoothed);
+            Out.ar(reverbOut, del * ampSmoothed * to_reverb_send.lag(0.05));
         }).add;
 
         // Reverb reads reverbBus → output to dryBus
@@ -251,6 +251,10 @@ Lied {
 
     setDelayAmp { arg amp;
         delaySynth.set(\amp, amp);
+    }
+
+    setDelayToReverbSend { arg amt;
+        delaySynth.set(\to_reverb_send, amt);
     }
 
     setReverbRoom { arg room;
@@ -476,7 +480,7 @@ Lied {
     allocTriSin { arg cellId;
         var pending;
         if (triSinInstances[cellId].isNil) {
-            triSinInstances[cellId] = TriSin.new(granularBus.index);
+            triSinInstances[cellId] = TriSin.new(dryBus.index, reverbBus.index, delayBus.index, granularBus.index);
             // Apply pending param values that were set before alloc
             pending = pendingTriSinParams[cellId];
             if (pending.notNil) {
@@ -522,11 +526,6 @@ Lied {
         };
     }
 
-    rerouteTriSin { arg cellId, busVal;
-        var inst = triSinInstances[cellId];
-        if (inst.notNil) { inst.reroute(busVal); }
-    }
-
     // -----------------------------------------------------------------
     // Ringer instance lifecycle (per row-2 cell)
     // -----------------------------------------------------------------
@@ -534,7 +533,7 @@ Lied {
     allocRinger { arg cellId;
         var pending;
         if (ringerInstances[cellId].isNil) {
-            ringerInstances[cellId] = Ringer.new(granularBus.index);
+            ringerInstances[cellId] = Ringer.new(dryBus.index, reverbBus.index, delayBus.index, granularBus.index);
             // Apply pending param values that were set before alloc
             pending = pendingRingerParams[cellId];
             if (pending.notNil) {
@@ -580,11 +579,6 @@ Lied {
         };
     }
 
-    rerouteRinger { arg cellId, busVal;
-        var inst = ringerInstances[cellId];
-        if (inst.notNil) { inst.reroute(busVal); }
-    }
-
     // -----------------------------------------------------------------
     // Sampler instance lifecycle (per row-4/6 slot, 1-16)
     // -----------------------------------------------------------------
@@ -623,7 +617,7 @@ Lied {
                         ("Sampler " ++ slot ++ " loaded new buffer: " ++ filePath
                             ++ " (" ++ duration.round(0.1) ++ "s)").postln;
                     };
-                    samplerInstances[slot] = Sampler.new(buf, granularBus.index);
+                    samplerInstances[slot] = Sampler.new(buf, dryBus.index, reverbBus.index, delayBus.index, granularBus.index);
                     // Apply pending params if any were set before load
                     pending = pendingSamplerParams[slot];
                     if (pending.notNil) {
@@ -682,11 +676,6 @@ Lied {
         };
     }
 
-    rerouteSampler { arg slot, busVal;
-        var inst = samplerInstances[slot];
-        if (inst.notNil) { inst.reroute(busVal); }
-    }
-
     // -----------------------------------------------------------------
     // OneShot instance lifecycle (per row-8 slot, 1-13)
     // -----------------------------------------------------------------
@@ -723,7 +712,7 @@ Lied {
                         ("OneShot " ++ slot ++ " loaded new buffer: " ++ filePath
                             ++ " (" ++ duration.round(0.1) ++ "s)").postln;
                     };
-                    oneShotInstances[slot] = OneShot.new(buf, granularBus.index);
+                    oneShotInstances[slot] = OneShot.new(buf, dryBus.index, reverbBus.index, delayBus.index, granularBus.index);
                     // Apply pending params if any were set before load
                     pending = pendingOneShotParams[slot];
                     if (pending.notNil) {
@@ -779,11 +768,6 @@ Lied {
             };
             pendingOneShotParams[slot][paramKey] = paramValue;
         };
-    }
-
-    rerouteOneShot { arg slot, busVal;
-        var inst = oneShotInstances[slot];
-        if (inst.notNil) { inst.reroute(busVal); }
     }
 
     // -----------------------------------------------------------------

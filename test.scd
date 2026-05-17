@@ -64,8 +64,7 @@ Routine({
 
 // Test 5: TriSin — trigger a note, verify sound, verify real-time amp control
 "Test 5: TriSin basic trigger (440Hz, voice \\1, on dryBus)...".postln;
-~triSinTest = TriSin.new;
-~triSinTest.setParam('all', \bus, kernel.dryBus.index);
+~triSinTest = TriSin.new(kernel.dryBus.index, kernel.reverbBus.index, kernel.delayBus.index, kernel.granularBus.index);
 ~triSinTest.setParam('all', \amp, 0.5);
 ~triSinTest.setParam('all', \release, 2.0);  // long release for amp-sweep test
 ~triSinTest.trigger(\1, 440);
@@ -82,8 +81,7 @@ Routine({
 1.0.wait;
 
 "Test 6b: TriSin amp fade with cutoff_env=0 (isolate cutoff envelope effect)".postln;
-~triSinTestB = TriSin.new;
-~triSinTestB.setParam('all', \bus, kernel.dryBus.index);
+~triSinTestB = TriSin.new(kernel.dryBus.index, kernel.reverbBus.index, kernel.delayBus.index, kernel.granularBus.index);
 ~triSinTestB.setParam('all', \amp, 0.5);
 ~triSinTestB.setParam('all', \release, 2.0);
 ~triSinTestB.setParam('all', \cutoff_env, 0);  // DISABLE cutoff envelope modulation
@@ -97,8 +95,7 @@ Routine({
 1.0.wait;
 
 "Test 7: TriSin polyphony — fire 4 notes in rapid succession on different voiceKeys".postln;
-~triSinPoly = TriSin.new;
-~triSinPoly.setParam('all', \bus, kernel.dryBus.index);
+~triSinPoly = TriSin.new(kernel.dryBus.index, kernel.reverbBus.index, kernel.delayBus.index, kernel.granularBus.index);
 ~triSinPoly.setParam('all', \amp, 0.3);
 ~triSinPoly.setParam('all', \release, 3.0);  // long release so notes overlap
 ~triSinPoly.trigger(\1, 261.6);   // C4
@@ -114,8 +111,7 @@ Routine({
 1.0.wait;
 
 "Test 8: Ringer basic trigger (pinged resonant filter at 440Hz)...".postln;
-~ringerTest = Ringer.new;
-~ringerTest.setParam('all', \bus, kernel.dryBus.index);
+~ringerTest = Ringer.new(kernel.dryBus.index, kernel.reverbBus.index, kernel.delayBus.index, kernel.granularBus.index);
 ~ringerTest.setParam('all', \amp, 0.5);
 ~ringerTest.setParam('all', \index, 4);
 ~ringerTest.trigger(\1, 440);
@@ -137,8 +133,7 @@ Server.default.sync;
 ("  Loaded buffer: " ++ ~samplerBuf.numFrames ++ " frames, "
     ++ ~samplerBuf.numChannels ++ " channels").postln;
 
-~samplerTest = Sampler.new(~samplerBuf);
-~samplerTest.setParam('all', \bus, kernel.dryBus.index);
+~samplerTest = Sampler.new(~samplerBuf, kernel.dryBus.index, kernel.reverbBus.index, kernel.delayBus.index, kernel.granularBus.index);
 ~samplerTest.setParam('all', \amp, 0.5);
 ~samplerTest.trigger(\1, 0.0, 1.0, 1);   // play full buffer
 "  Expected: full test_long.wav plays at original rate.".postln;
@@ -150,8 +145,7 @@ Server.default.sync;
 "Test 11: Sampler crossfade — rapid retriggers at 16th-note intervals (~250ms)".postln;
 ~xfBuf = Buffer.read(Server.default, thisProcess.nowExecutingPath.dirname +/+ "audio/test_long.wav");
 Server.default.sync;
-~xfSampler = Sampler.new(~xfBuf);
-~xfSampler.setParam('all', \bus, kernel.dryBus.index);
+~xfSampler = Sampler.new(~xfBuf, kernel.dryBus.index, kernel.reverbBus.index, kernel.delayBus.index, kernel.granularBus.index);
 ~xfSampler.setParam('all', \amp, 0.3);
 "  Expected: 16 retriggers, each cutting cleanly to the next.".postln;
 "  Failure mode: audible clicks/pops on each retrigger.".postln;
@@ -168,8 +162,7 @@ Server.default.sync;
     "Test 12: OneShot — basic trigger, hear a quick noise burst".postln;
     ~oneShotBuf = Buffer.read(Server.default, thisProcess.nowExecutingPath.dirname +/+ "audio/test_oneshot.wav");
     Server.default.sync;
-    ~oneShotTest = OneShot.new(~oneShotBuf);
-    ~oneShotTest.setParam('all', \bus, kernel.dryBus.index);
+    ~oneShotTest = OneShot.new(~oneShotBuf, kernel.dryBus.index, kernel.reverbBus.index, kernel.delayBus.index, kernel.granularBus.index);
     ~oneShotTest.setParam('all', \amp, 0.5);
     ~oneShotTest.trigger(\1);
     "  Expected: ~1.6s sample playback (freed after 1s wait).".postln;
@@ -181,8 +174,7 @@ Server.default.sync;
     "Test 13: OneShot long-sample fade-out (spec §14 test #7)".postln;
     ~fieldBuf = Buffer.read(Server.default, thisProcess.nowExecutingPath.dirname +/+ "audio/test_field.wav");
     Server.default.sync;
-    ~fieldTest = OneShot.new(~fieldBuf);
-    ~fieldTest.setParam('all', \bus, kernel.dryBus.index);
+    ~fieldTest = OneShot.new(~fieldBuf, kernel.dryBus.index, kernel.reverbBus.index, kernel.delayBus.index, kernel.granularBus.index);
     ~fieldTest.setParam('all', \amp, 0.5);
     ~fieldTest.setParam('all', \amp_slew, 0.3);  // slow but completes within test window
     ~fieldTest.trigger(\1);
@@ -240,18 +232,17 @@ kernel.setGranularOutAmp(0);
 "  granular_out_amp = 0 (expecting silence)".postln;
 2.0.wait;
 
-    // Test 17: reroute (voice survives bus change)
-    "Test 17: TriSin reroute...".postln;
-    kernel.allocTriSin(\reroute_test);
-    kernel.triggerTriSin(\reroute_test, \1, 440);
+    // Test 17: voice sends — allocate, trigger, change sends
+    "Test 17: voice sends — allocate, trigger, change sends...".postln;
+    kernel.allocTriSin(\sends_test);
+    kernel.triggerTriSin(\sends_test, \1, 440);
     1.0.wait;
-    // Reroute to reverbBus (route audio through the reverb chain)
-    kernel.rerouteTriSin(\reroute_test, kernel.reverbBus.index);
+    kernel.setTriSinParam(\sends_test, \reverb_send, 0.5);  // add some reverb
     0.5.wait;
-    kernel.triggerTriSin(\reroute_test, \1, 660);
+    kernel.triggerTriSin(\sends_test, \1, 660);
     1.5.wait;
-    kernel.freeTriSin(\reroute_test);
-    "  TriSin reroute survived (no SC error).".postln;
+    kernel.freeTriSin(\sends_test);
+    "  voice sends survived (no SC error).".postln;
 
     // Test 18: grain LFO rate setter (after lazy chain allocation)
     "Test 18: grain LFO rate live update...".postln;

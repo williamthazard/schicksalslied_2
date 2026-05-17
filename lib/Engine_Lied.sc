@@ -18,6 +18,7 @@ Engine_Lied : CroneEngine {
         this.addCommand(\set_delay_time,  "f", { arg msg; kernel.setDelayTime(msg[1]); });
         this.addCommand(\set_delay_decay, "f", { arg msg; kernel.setDelayDecay(msg[1]); });
         this.addCommand(\set_delay_amp,   "f", { arg msg; kernel.setDelayAmp(msg[1]); });
+        this.addCommand(\set_delay_to_reverb_send, "f", { arg msg; kernel.setDelayToReverbSend(msg[1]); });
         this.addCommand(\set_reverb_room, "f", { arg msg; kernel.setReverbRoom(msg[1]); });
         this.addCommand(\set_reverb_damp, "f", { arg msg; kernel.setReverbDamp(msg[1]); });
         this.addCommand(\set_reverb_amp,  "f", { arg msg; kernel.setReverbAmp(msg[1]); });
@@ -59,9 +60,6 @@ Engine_Lied : CroneEngine {
         this.addCommand(\trisin_set_param, "ssf", { arg msg;
             kernel.setTriSinParam(msg[1].asSymbol, msg[2].asSymbol, msg[3]);
         });
-        this.addCommand(\trisin_reroute, "sf", { arg msg;
-            kernel.rerouteTriSin(msg[1].asSymbol, msg[2]);
-        });
 
         this.addCommand(\ringer_alloc, "s", { arg msg;
             kernel.allocRinger(msg[1].asSymbol);
@@ -77,9 +75,6 @@ Engine_Lied : CroneEngine {
         });
         this.addCommand(\ringer_set_param, "ssf", { arg msg;
             kernel.setRingerParam(msg[1].asSymbol, msg[2].asSymbol, msg[3]);
-        });
-        this.addCommand(\ringer_reroute, "sf", { arg msg;
-            kernel.rerouteRinger(msg[1].asSymbol, msg[2]);
         });
 
         // -----------------------------------------------------------------
@@ -103,9 +98,6 @@ Engine_Lied : CroneEngine {
         this.addCommand(\sampler_set_param, "isf", { arg msg;
             kernel.setSamplerParam(msg[1].asInteger, msg[2].asSymbol, msg[3]);
         });
-        this.addCommand(\sampler_reroute, "if", { arg msg;
-            kernel.rerouteSampler(msg[1].asInteger, msg[2]);
-        });
 
         // -----------------------------------------------------------------
         // OneShot instance lifecycle (per row-8 slot, integer 1-13)
@@ -125,9 +117,6 @@ Engine_Lied : CroneEngine {
         });
         this.addCommand(\oneshot_set_param, "isf", { arg msg;
             kernel.setOneShotParam(msg[1].asInteger, msg[2].asSymbol, msg[3]);
-        });
-        this.addCommand(\oneshot_reroute, "if", { arg msg;
-            kernel.rerouteOneShot(msg[1].asInteger, msg[2]);
         });
 
         this.addCommand(\silence_all_samplers, "", { arg msg;

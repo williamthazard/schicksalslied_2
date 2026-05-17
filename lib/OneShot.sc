@@ -31,32 +31,30 @@ OneShot {
                         pan = 0,
                         pan_slew = 0.5,
                         buf = 0,
-                        bus = 0,
-                        gran_bus = 0,
-                        granular_send = 0;
+                        dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
+                        dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 
-                    var sig = PlayBuf.ar(1, buf, BufRateScale.ir(buf) * rate, t_gate);
-                    var filter = MoogFF.ar(sig, cutoff.lag3(cutoff_slew), resonance);
-                    var signal = Pan2.ar(filter, pan.lag3(pan_slew));
+                    var sig, filter, signal, ampSig;
+                    sig = PlayBuf.ar(1, buf, BufRateScale.ir(buf) * rate, t_gate);
+                    filter = MoogFF.ar(sig, cutoff.lag3(cutoff_slew), resonance);
+                    signal = Pan2.ar(filter, pan.lag3(pan_slew));
 
-                    // Granular send: parallel copy to granular chain at independent level.
-                    // Uses signal (post-pan) but BEFORE amp scaling, so amp=0 + granular_send=1
-                    // gives "granular only" routing without killing the granular signal.
-                    Out.ar(gran_bus, signal * granular_send.lag3(0.05));
-
-                    // Single amp multiplication with .lag3 for click-free
-                    // real-time control. No doneAction:2 — synth is persistent.
-                    Out.ar(bus, signal * amp.lag3(amp_slew));
+                    // Post-fader: amp scales all 4 sends. No doneAction:2 — synth is persistent.
+                    ampSig = amp.lag3(amp_slew);
+                    Out.ar(dry_bus,    signal * ampSig * dry_send.lag3(0.05));
+                    Out.ar(reverb_bus, signal * ampSig * reverb_send.lag3(0.05));
+                    Out.ar(delay_bus,  signal * ampSig * delay_send.lag3(0.05));
+                    Out.ar(gran_bus,   signal * ampSig * granular_send.lag3(0.05));
                 }).add;
             }
         }
     }
 
-    *new { arg buf, granularBusIdx;
-        ^super.new.init(buf, granularBusIdx);
+    *new { arg buf, dryBusIdx, reverbBusIdx, delayBusIdx, granularBusIdx;
+        ^super.new.init(buf, dryBusIdx, reverbBusIdx, delayBusIdx, granularBusIdx);
     }
 
-    init { arg buf, granularBusIdx;
+    init { arg buf, dryBusIdx, reverbBusIdx, delayBusIdx, granularBusIdx;
         var s = Server.default;
 
         buffer = buf;
@@ -72,9 +70,14 @@ OneShot {
             \pan_slew, 0.5,
             \buf, buf.bufnum,
             \rate, 1,
-            \bus, 0,
+            \dry_bus, dryBusIdx ? 0,
+            \reverb_bus, reverbBusIdx ? 0,
+            \delay_bus, delayBusIdx ? 0,
             \gran_bus, granularBusIdx ? 0,
-            \granular_send, 0;
+            \dry_send, 1,
+            \reverb_send, 0,
+            \delay_send, 0,
+            \granular_send, 0,
         ]);
         singleVoices = Dictionary.new;
         voiceParams = Dictionary.new;
@@ -136,25 +139,6 @@ OneShot {
             });
         }, {
             this.adjustVoice(voiceKey, paramKey, paramValue);
-        });
-    }
-
-    // Free voice subgroups + update voiceParams[*][\bus] so the next trigger
-    // allocates fresh with the new output bus. Needed because Out.ar samples
-    // \bus at construction; .set on a running synth updates the control value
-    // but doesn't reroute audio. We use the same free+recreate pattern as
-    // resetVoices: simply calling freeAll would leave the subgroup Group node
-    // alive (isPlaying returns true), routing the next trigger into the
-    // re-trigger branch instead of fresh-allocate.
-    reroute {
-        arg busVal;
-        var s = Server.default;
-        voiceKeys.do({ arg vK;
-            voiceParams[vK][\bus] = busVal;
-            if (singleVoices[vK].notNil) {
-                singleVoices[vK].free;
-            };
-            singleVoices[vK] = Group.new(voiceGroup);
         });
     }
 

@@ -7,27 +7,6 @@ local Grain = include 'lib/grid_grain_params'
 
 local VoiceParams = {}
 
--- Bus routing options surface to the user. Underlying SC bus index is
--- resolved at action time via VoiceParams.bus_idx_for.
-VoiceParams.BUS_ROUTING_OPTIONS = { 'dry', 'reverb', 'delay+reverb' }
-
--- Map a bus_routing option index (1..3) to the SC audio bus number.
--- Lied.sc allocates 3 stereo buses in order: dryBus, reverbBus, delayBus.
--- The actual indices depend on Norns's output bus channel count + Lied's
--- allocation order. We hardcode the expected triplet here; Lied.sc prints
--- the actual indices at boot so the user can verify on hardware. If the
--- hardware values differ, update the constants below.
--- Granular routing is now a separate parallel send (granular_send param per
--- voice) rather than a bus_routing option — voices can feed both destinations
--- simultaneously at independent levels.
-function VoiceParams.bus_idx_for(routing_idx)
-    if routing_idx == 1 then return 4     -- dryBus (post output 0-1, so starts at 4 on stereo-output Norns)
-    elseif routing_idx == 2 then return 6  -- reverbBus
-    elseif routing_idx == 3 then return 8  -- delayBus
-    end
-    return 4
-end
-
 -- ────────────────────────────────────────────────────────────────────────
 -- SAMPLER PARAM BLOCK (called from schicksalslied.lua's add_params for
 -- slots 1..16). Adds 9 params per sampler (file param is added separately
@@ -98,18 +77,25 @@ function VoiceParams.add_sampler_block(slot)
         end,
     }
     params:add{
-        type = 'option',
-        id = 'sampler_' .. slot .. '_bus_routing',
-        name = 'sampler ' .. slot .. ' bus routing',
-        options = VoiceParams.BUS_ROUTING_OPTIONS,
-        default = 1,
-        action = function(routing_idx)
-            engine.sampler_reroute(slot, VoiceParams.bus_idx_for(routing_idx))
-        end,
+        type = 'control', id = 'sampler_' .. slot .. '_dry_send',
+        name = 'sampler ' .. slot .. ' dry send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 1, ''),
+        action = function(v) engine.sampler_set_param(slot, 'dry_send', v) end,
     }
     params:add{
-        type = 'control',
-        id = 'sampler_' .. slot .. '_granular_send',
+        type = 'control', id = 'sampler_' .. slot .. '_reverb_send',
+        name = 'sampler ' .. slot .. ' reverb send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0, ''),
+        action = function(v) engine.sampler_set_param(slot, 'reverb_send', v) end,
+    }
+    params:add{
+        type = 'control', id = 'sampler_' .. slot .. '_delay_send',
+        name = 'sampler ' .. slot .. ' delay send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0, ''),
+        action = function(v) engine.sampler_set_param(slot, 'delay_send', v) end,
+    }
+    params:add{
+        type = 'control', id = 'sampler_' .. slot .. '_granular_send',
         name = 'sampler ' .. slot .. ' granular send',
         controlspec = controlspec.new(0, 1, 'lin', 0.01, 0, ''),
         action = function(v) engine.sampler_set_param(slot, 'granular_send', v) end,
@@ -188,18 +174,25 @@ function VoiceParams.add_oneshot_block(slot)
         end,
     }
     params:add{
-        type = 'option',
-        id = 'oneshot_' .. slot .. '_bus_routing',
-        name = 'one-shot ' .. slot .. ' bus routing',
-        options = VoiceParams.BUS_ROUTING_OPTIONS,
-        default = 1,
-        action = function(routing_idx)
-            engine.oneshot_reroute(slot, VoiceParams.bus_idx_for(routing_idx))
-        end,
+        type = 'control', id = 'oneshot_' .. slot .. '_dry_send',
+        name = 'one-shot ' .. slot .. ' dry send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 1, ''),
+        action = function(v) engine.oneshot_set_param(slot, 'dry_send', v) end,
     }
     params:add{
-        type = 'control',
-        id = 'oneshot_' .. slot .. '_granular_send',
+        type = 'control', id = 'oneshot_' .. slot .. '_reverb_send',
+        name = 'one-shot ' .. slot .. ' reverb send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0, ''),
+        action = function(v) engine.oneshot_set_param(slot, 'reverb_send', v) end,
+    }
+    params:add{
+        type = 'control', id = 'oneshot_' .. slot .. '_delay_send',
+        name = 'one-shot ' .. slot .. ' delay send',
+        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0, ''),
+        action = function(v) engine.oneshot_set_param(slot, 'delay_send', v) end,
+    }
+    params:add{
+        type = 'control', id = 'oneshot_' .. slot .. '_granular_send',
         name = 'one-shot ' .. slot .. ' granular send',
         controlspec = controlspec.new(0, 1, 'lin', 0.01, 0, ''),
         action = function(v) engine.oneshot_set_param(slot, 'granular_send', v) end,
@@ -307,20 +300,25 @@ function VoiceParams.add_row2_cell_block(x)
         end,
     }
     params:add{
-        type = 'option',
-        id = 'cell_' .. x .. '_2_bus_routing',
-        name = 'cell ' .. x .. ' bus routing',
-        options = VoiceParams.BUS_ROUTING_OPTIONS,
-        default = 1,
-        action = function(routing_idx)
-            local bus_idx = VoiceParams.bus_idx_for(routing_idx)
-            local role = ROLE_NAMES[params:get('cell_' .. x .. '_2_role')]
-            if role == 'TriSin' then
-                engine.trisin_reroute(cell_id, bus_idx)
-            elseif role == 'Ringer' then
-                engine.ringer_reroute(cell_id, bus_idx)
-            end
-        end,
+        type = 'control',
+        id = 'cell_' .. x .. '_2_dry_send',
+        name = 'cell ' .. x .. ' dry send',
+        controlspec = cs.new(0, 2, 'lin', 0.01, 1, ''),
+        action = function(v) VoiceParams._set_cell_param(x, 'dry_send', v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'cell_' .. x .. '_2_reverb_send',
+        name = 'cell ' .. x .. ' reverb send',
+        controlspec = cs.new(0, 2, 'lin', 0.01, 0, ''),
+        action = function(v) VoiceParams._set_cell_param(x, 'reverb_send', v) end,
+    }
+    params:add{
+        type = 'control',
+        id = 'cell_' .. x .. '_2_delay_send',
+        name = 'cell ' .. x .. ' delay send',
+        controlspec = cs.new(0, 2, 'lin', 0.01, 0, ''),
+        action = function(v) VoiceParams._set_cell_param(x, 'delay_send', v) end,
     }
     params:add{
         type = 'control',
@@ -538,7 +536,8 @@ function VoiceParams._update_row2_visibility(x, role)
     }
     local ringer_only = { 'decay' }
     local midi_only = { 'midi_channel' }
-    local shared = { 'amp', 'amp_slew', 'pan', 'pan_slew', 'polyphony', 'bus_routing', 'granular_send' }
+    local shared = { 'amp', 'amp_slew', 'pan', 'pan_slew', 'polyphony',
+                     'dry_send', 'reverb_send', 'delay_send', 'granular_send' }
 
     local prefix = 'cell_' .. x .. '_2_'
     local function show_or_hide(list, show)
