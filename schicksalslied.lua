@@ -362,11 +362,25 @@ end
 
 function enc(n, d)
     if n == 1 then
-        -- E1: scroll history index. Provides visual highlight via redraw.
+        -- E1: scroll history. Mirrors keyboard UP/DOWN — moves history_index
+        -- AND replaces displayed_string with the highlighted history line
+        -- (or clears when at the past-end "new line" position).
         if #history == 0 then return end
-        history_index = util.clamp(history_index + d, 0, #history)
+        if new_line and d < 0 then
+            -- Coming from a fresh ENTER state — jump to the last history item
+            history_index = #history - 1
+            new_line = false
+        else
+            history_index = util.clamp(history_index + d, 0, #history)
+        end
+        if history_index == #history then
+            displayed_string = ""
+            new_line = true
+        else
+            displayed_string = history[history_index + 1] or ""
+            new_line = false
+        end
         grid_dirty = true
-        -- (does NOT modify displayed_string — K2 commits the selection)
 
     elseif n == 2 then
         -- E2: global amp
