@@ -22,6 +22,39 @@ local Grain      = include 'lib/grid_grain_params'
 local MidiInput  = include 'lib/midi_input'
 
 -- ========================================================================
+-- SAMPLE DURATION GUARD
+-- ========================================================================
+local MAX_SAMPLE_SEC = 600  -- 10-minute max per Sampler/OneShot buffer
+
+-- Returns duration in seconds, or nil if the file can't be inspected.
+local function file_duration(path)
+    if path == nil or path == '' or path == '-' then return nil end
+    local ch, samples, sr, fmt = audio.file_info(path)
+    if ch == nil or samples == nil or sr == nil or sr == 0 then
+        return nil
+    end
+    return samples / sr
+end
+
+-- Returns true if the file is safe to load (duration <= MAX_SAMPLE_SEC),
+-- false otherwise. Prints a warning when rejecting.
+local function check_sample_duration(label, slot, path)
+    if path == nil or path == '' or path == '-' then return true end
+    local dur = file_duration(path)
+    if dur == nil then
+        -- Couldn't inspect; let the SC side try.
+        return true
+    end
+    if dur > MAX_SAMPLE_SEC then
+        print(string.format(
+            '%s %d load REJECTED: file is %.1fs (max %ds). Use a shorter sample.',
+            label, slot, dur, MAX_SAMPLE_SEC))
+        return false
+    end
+    return true
+end
+
+-- ========================================================================
 -- MODULE-LEVEL LOCALS — text input + history
 -- ========================================================================
 local displayed_string = ""    -- live typing buffer
@@ -982,9 +1015,10 @@ local function add_params()
                 action = function(path)
                     if path == nil or path == '' or path == '-' then
                         engine.sampler_clear(slot)
-                    else
+                    elseif check_sample_duration('looping sampler', slot, path) then
                         engine.sampler_load(slot, path)
                     end
+                    -- if duration check fails, no engine call; warning already printed
                 end,
             }
             VoiceParams.add_sampler_block(slot)  -- 9 voice params
@@ -1072,9 +1106,10 @@ local function add_params()
                 action = function(path)
                     if path == nil or path == '' or path == '-' then
                         engine.oneshot_clear(slot)
-                    else
+                    elseif check_sample_duration('one-shot', slot, path) then
                         engine.oneshot_load(slot, path)
                     end
+                    -- if duration check fails, no engine call; warning already printed
                 end,
             }
             VoiceParams.add_oneshot_block(slot)                               -- 9
