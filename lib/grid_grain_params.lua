@@ -1,6 +1,8 @@
 -- lib/grid_grain_params.lua — granular delay params block
 -- Spec §6: master amps + fb patch surface + buried + per-grain LFO rates × 8.
 
+local Roles = include 'lib/cell_roles'
+
 local Grain = {}
 
 -- Add the granular delay param group.
@@ -11,17 +13,59 @@ local Grain = {}
 -- Group capacity breakdown:
 --   - 4 separators (master, fb_patch_surface, fb_patch_advanced, grain_lfo_rates)
 --   - 3 master amps (added by caller AFTER Grain.add_params returns)
+--   - 3 master amp state toggles (mic_to_delay_state, granular_out_state, mic_dry_state)
 --   - 3 fb patch surface (feedback_amp, feedback_balance, feedback_hpf)
 --   - 3 fb patch advanced (noise_inject_level, sine_inject_level, sine_inject_freq)
 --   - 24 grain LFO rates (8 grains × 3 params)
 --   - 1 randomize-all trigger
--- Total: 4 + 3 + 3 + 3 + 24 + 1 = 38
+-- Total: 4 + 3 + 3 + 3 + 3 + 24 + 1 = 41
 function Grain.add_params()
-    params:add_group('granular_delay', 'granular delay', 38)
+    params:add_group('granular_delay', 'granular delay', 41)
 
     params:add_separator('master_amps_separator', 'master amps')
     -- The 3 master amps are added by schicksalslied.lua's add_params right
     -- AFTER this function returns, so they fall under this separator.
+    -- The 3 state params below toggle those amp controls on/off.
+
+    params:add{
+        type = 'option',
+        id = 'mic_to_delay_state',
+        name = 'mic to delay state',
+        options = { 'off', 'on' },
+        default = 1,
+        action = function(idx)
+            Roles.Sequencer.Toggled[14][8] = (idx == 2)
+            local on_value = params:get('mic_to_delay_amp')
+            engine.set_mic_amp((idx == 2) and on_value or 0)
+            grid_dirty = true
+        end,
+    }
+    params:add{
+        type = 'option',
+        id = 'granular_out_state',
+        name = 'granular out state',
+        options = { 'off', 'on' },
+        default = 1,
+        action = function(idx)
+            Roles.Sequencer.Toggled[15][8] = (idx == 2)
+            local on_value = params:get('granular_out_amp')
+            engine.set_granular_out_amp((idx == 2) and on_value or 0)
+            grid_dirty = true
+        end,
+    }
+    params:add{
+        type = 'option',
+        id = 'mic_dry_state',
+        name = 'mic dry state',
+        options = { 'off', 'on' },
+        default = 1,
+        action = function(idx)
+            Roles.Sequencer.Toggled[16][8] = (idx == 2)
+            local on_value = params:get('mic_dry_amp')
+            engine.set_mic_dry_amp((idx == 2) and on_value or 0)
+            grid_dirty = true
+        end,
+    }
 
     params:add_separator('fb_patch_surface', 'feedback patch')
 

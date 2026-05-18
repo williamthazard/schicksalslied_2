@@ -853,7 +853,7 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     -- MASTER FX GROUP — delay + reverb controls
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('master_fx', 'master fx', 8)
+    params:add_group('master_fx', 'master fx', 9)
 
     params:add{
         type = 'option',
@@ -910,6 +910,13 @@ local function add_params()
     }
     params:add{
         type = 'control',
+        id = 'delay_to_dry_send',
+        name = 'delay → dry send',
+        controlspec = controlspec.new(0, 1, 'lin', 0.01, 0, ''),
+        action = function(v) engine.set_delay_to_dry_send(v) end,
+    }
+    params:add{
+        type = 'control',
         id = 'reverb_room',
         name = 'reverb room',
         controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.5, ''),
@@ -931,11 +938,11 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
-    -- ROW-2 CELLS GROUP (16 cells × 44 params + 1 separator/cell + 4 bulk = 724)
-    -- Each cell: 1 separator + 1 role + 14 seq_mode + 9 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 44
+    -- ROW-2 CELLS GROUP (16 cells × 45 params + 1 separator/cell + 4 bulk = 740)
+    -- Each cell: 1 separator + 1 state + 1 role + 14 seq_mode + 9 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 45
     -- shared: amp, amp_slew, pan, pan_slew, polyphony, dry_send, reverb_send, delay_send, granular_send
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'synths', 16 * 45 + 4)
+    params:add_group('row_2_cells', 'synths', 16 * 46 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
@@ -983,14 +990,14 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- LOOPING SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 12 voice + 1 trigger-cell sep + 14 trigger seq_mode
+    -- Each slot: 1 separator + 1 file + 13 voice + 1 trigger-cell sep + 14 trigger seq_mode
     --            + 13 position value_mode + 13 duration value_mode
-    --            + 1 rate-cell sep + 14 rate seq_mode + 13 rate value_mode = 83
-    -- voice: amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
-    --        dry_send, reverb_send, delay_send, granular_send, randomize = 12
-    -- 16 slots × 83 + 4 bulk triggers = 1332
+    --            + 1 rate-cell sep + 14 rate seq_mode + 13 rate value_mode = 84
+    -- voice: state + amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
+    --        dry_send, reverb_send, delay_send, granular_send, randomize = 13
+    -- 16 slots × 84 + 4 bulk triggers = 1348
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('samplers', 'looping samplers', 16 * 83 + 4)
+    params:add_group('samplers', 'looping samplers', 16 * 84 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 16 do
@@ -1089,12 +1096,12 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- ONE-SHOT SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 12 voice + 14 seq_mode + 13 rate value_mode = 41
-    -- voice: amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
-    --        dry_send, reverb_send, delay_send, granular_send, randomize = 12
-    -- 13 slots × 41 + 2 bulk triggers = 535
+    -- Each slot: 1 separator + 1 file + 13 voice + 14 seq_mode + 13 rate value_mode = 42
+    -- voice: state + amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
+    --        dry_send, reverb_send, delay_send, granular_send, randomize = 13
+    -- 13 slots × 42 + 2 bulk triggers = 548
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 41 + 2)
+    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 42 + 2)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 13 do
@@ -1150,141 +1157,6 @@ local function add_params()
         LiedLfos.add_oneshot_lfos_group()
         LiedLfos.add_crow_lfos_group()
     end
-
-    -- ────────────────────────────────────────────────────────────────────
-    -- NO-GRID TEST GROUP — toggle cells + mic/granular controls without
-    -- a physical grid. Mirrors G.key behavior so testing matches grid use.
-    -- 16 synth + 16 samp_trig + 16 samp_rate + 13 oneshot + 3 mic/gran
-    -- + 1 assign + 1 all_off = 66
-    -- ────────────────────────────────────────────────────────────────────
-    params:add_group('no_grid_test', 'no-grid test', 66)
-
-    local function toggle_cell(x, y)
-        Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
-        if Sequencer.Toggled[x][y] and y == 2 then
-            Roles.ensure_allocated(x, y)
-        end
-        grid_dirty = true
-    end
-
-    -- 16 synth toggles (row 2)
-    for x = 1, 16 do
-        params:add{
-            type = 'trigger',
-            id = 'no_grid_synth_' .. x .. '_toggle',
-            name = 'toggle synth ' .. x,
-            action = function() toggle_cell(x, 2) end,
-        }
-    end
-
-    -- 16 sampler trigger-cell toggles (rows 4/6 odd cols)
-    for y = 4, 6, 2 do
-        for x = 1, 15, 2 do
-            params:add{
-                type = 'trigger',
-                id = 'no_grid_samp_trig_' .. x .. '_' .. y,
-                name = 'toggle sampler trig (' .. x .. ',' .. y .. ')',
-                action = function() toggle_cell(x, y) end,
-            }
-        end
-    end
-
-    -- 16 sampler rate-cell toggles (rows 4/6 even cols)
-    for y = 4, 6, 2 do
-        for x = 2, 16, 2 do
-            params:add{
-                type = 'trigger',
-                id = 'no_grid_samp_rate_' .. x .. '_' .. y,
-                name = 'toggle sampler rate (' .. x .. ',' .. y .. ')',
-                action = function() toggle_cell(x, y) end,
-            }
-        end
-    end
-
-    -- 13 one-shot toggles (row 8 cols 1-13)
-    for x = 1, 13 do
-        params:add{
-            type = 'trigger',
-            id = 'no_grid_oneshot_' .. x .. '_toggle',
-            name = 'toggle one-shot ' .. x,
-            action = function() toggle_cell(x, 8) end,
-        }
-    end
-
-    -- 3 mic/granular controls (row 8 cols 14/15/16) — mirror G.key logic
-    params:add{
-        type = 'trigger',
-        id = 'no_grid_mic_to_delay_toggle',
-        name = 'toggle mic to delay',
-        action = function()
-            Sequencer.Toggled[14][8] = not Sequencer.Toggled[14][8]
-            local on_value = params:get('mic_to_delay_amp')
-            engine.set_mic_amp(Sequencer.Toggled[14][8] and on_value or 0)
-            grid_dirty = true
-        end,
-    }
-    params:add{
-        type = 'trigger',
-        id = 'no_grid_granular_out_toggle',
-        name = 'toggle granular out',
-        action = function()
-            Sequencer.Toggled[15][8] = not Sequencer.Toggled[15][8]
-            local on_value = params:get('granular_out_amp')
-            engine.set_granular_out_amp(Sequencer.Toggled[15][8] and on_value or 0)
-            grid_dirty = true
-        end,
-    }
-    params:add{
-        type = 'trigger',
-        id = 'no_grid_mic_dry_toggle',
-        name = 'toggle mic dry',
-        action = function()
-            Sequencer.Toggled[16][8] = not Sequencer.Toggled[16][8]
-            local on_value = params:get('mic_dry_amp')
-            engine.set_mic_dry_amp(Sequencer.Toggled[16][8] and on_value or 0)
-            grid_dirty = true
-        end,
-    }
-
-    -- 1 "assign my_string to all toggled cells" trigger
-    params:add{
-        type = 'trigger',
-        id = 'no_grid_assign_my_string_to_toggled',
-        name = 'assign my_string to all toggled',
-        action = function()
-            if my_string == '' then
-                print('no-grid: my_string is empty, nothing to assign')
-                return
-            end
-            for x = 1, 16 do
-                for y = 2, 8, 2 do
-                    if Sequencer.Toggled[x][y] then
-                        Sequencer.assign(x, y, my_string)
-                    end
-                end
-            end
-            print('no-grid: assigned my_string to all toggled cells')
-        end,
-    }
-
-    -- 1 "all off" trigger — resets every Toggled state + zeros mic/granular
-    params:add{
-        type = 'trigger',
-        id = 'no_grid_all_off',
-        name = 'all off',
-        action = function()
-            for x = 1, 16 do
-                for y = 2, 8, 2 do
-                    Sequencer.Toggled[x][y] = false
-                end
-            end
-            engine.set_mic_amp(0)
-            engine.set_granular_out_amp(0)
-            engine.set_mic_dry_amp(0)
-            grid_dirty = true
-            print('no-grid: all off')
-        end,
-    }
 
 end
 

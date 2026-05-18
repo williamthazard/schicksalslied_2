@@ -19,6 +19,7 @@ Engine_Lied : CroneEngine {
         this.addCommand(\set_delay_decay, "f", { arg msg; kernel.setDelayDecay(msg[1]); });
         this.addCommand(\set_delay_amp,   "f", { arg msg; kernel.setDelayAmp(msg[1]); });
         this.addCommand(\set_delay_to_reverb_send, "f", { arg msg; kernel.setDelayToReverbSend(msg[1]); });
+        this.addCommand(\set_delay_to_dry_send, "f", { arg msg; kernel.setDelayToDrySend(msg[1]); });
         this.addCommand(\set_reverb_room, "f", { arg msg; kernel.setReverbRoom(msg[1]); });
         this.addCommand(\set_reverb_damp, "f", { arg msg; kernel.setReverbDamp(msg[1]); });
         this.addCommand(\set_reverb_amp,  "f", { arg msg; kernel.setReverbAmp(msg[1]); });

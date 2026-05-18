@@ -13,6 +13,26 @@ local VoiceParams = {}
 -- by the caller — see Task 5.2).
 -- ────────────────────────────────────────────────────────────────────────
 function VoiceParams.add_sampler_block(slot)
+    -- Sampler state — toggles the trigger cell on/off.
+    do
+        local trigger_col, trigger_row
+        if slot <= 8 then
+            trigger_col, trigger_row = (slot * 2) - 1, 4
+        else
+            trigger_col, trigger_row = ((slot - 8) * 2) - 1, 6
+        end
+        params:add{
+            type = 'option',
+            id = 'sampler_' .. slot .. '_state',
+            name = 'looping sampler ' .. slot .. ' state',
+            options = { 'off', 'on' },
+            default = 1,
+            action = function(idx)
+                Roles.Sequencer.Toggled[trigger_col][trigger_row] = (idx == 2)
+                grid_dirty = true
+            end,
+        }
+    end
     params:add{
         type = 'control',
         id = 'sampler_' .. slot .. '_amp',
@@ -121,6 +141,17 @@ end
 -- slots 1..13). Adds 9 params per one-shot (file param added separately).
 -- ────────────────────────────────────────────────────────────────────────
 function VoiceParams.add_oneshot_block(slot)
+    params:add{
+        type = 'option',
+        id = 'oneshot_' .. slot .. '_state',
+        name = 'one-shot ' .. slot .. ' state',
+        options = { 'off', 'on' },
+        default = 1,
+        action = function(idx)
+            Roles.Sequencer.Toggled[slot][8] = (idx == 2)
+            grid_dirty = true
+        end,
+    }
     params:add{
         type = 'control',
         id = 'oneshot_' .. slot .. '_amp',
@@ -255,6 +286,22 @@ function VoiceParams.add_row2_cell_block(x)
                 Roles.allocated[cell_id] = nil
             end
             VoiceParams._update_row2_visibility(x, role)
+        end,
+    }
+
+    -- ── Cell state — toggles the sequencer cell on/off (mirrors grid press). ──
+    -- When turning on, also ensures the SC voice instance is allocated.
+    params:add{
+        type = 'option',
+        id = 'cell_' .. x .. '_2_state',
+        name = 'cell ' .. x .. ' state',
+        options = { 'off', 'on' },
+        default = 1,  -- 'off'
+        action = function(idx)
+            local on = (idx == 2)
+            Roles.Sequencer.Toggled[x][2] = on
+            if on then Roles.ensure_allocated(x, 2) end
+            grid_dirty = true
         end,
     }
 

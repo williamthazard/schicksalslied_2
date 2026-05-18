@@ -82,11 +82,11 @@ Lied {
         // own terminology and avoids confusing the Lua-side param wiring later.
         SynthDef(\liedDelay, {
             arg inBus, dryOut, reverbOut, delayTime = 0.3, decayTime = 0.5,
-                amp = 1.0, amp_slew = 0.1, to_reverb_send = 1;
+                amp = 1.0, amp_slew = 0.1, to_reverb_send = 1, to_dry_send = 0;
             var sig = In.ar(inBus, 2);
             var del = CombL.ar(sig, 2.0, delayTime, decayTime);
             var ampSmoothed = amp.lag(amp_slew);
-            Out.ar(dryOut,    del * ampSmoothed);
+            Out.ar(dryOut,    del * ampSmoothed * to_dry_send.lag(0.05));
             Out.ar(reverbOut, del * ampSmoothed * to_reverb_send.lag(0.05));
         }).add;
 
@@ -255,6 +255,10 @@ Lied {
 
     setDelayToReverbSend { arg amt;
         delaySynth.set(\to_reverb_send, amt);
+    }
+
+    setDelayToDrySend { arg amt;
+        delaySynth.set(\to_dry_send, amt);
     }
 
     setReverbRoom { arg room;
