@@ -29,6 +29,7 @@ Lied {
     var <grainRates, <grainDurs, <grainDelays;
     var <grainPanRates, <grainCutoffRates, <grainResRates;
     var <granularAllocated;
+    var <grainDelayScale;  // multiplier for grain ptrSampleDelay (default 1.0)
 
     *new { arg server;
         ^super.new.init(server);
@@ -228,6 +229,7 @@ Lied {
         grainPanRates    = Array.fill(8, { rrand(1, 64) });
         grainCutoffRates = Array.fill(8, { rrand(1, 64) });
         grainResRates    = Array.fill(8, { rrand(1, 64) });
+        grainDelayScale  = 1.0;
 
         "Lied initialized.".postln;
     }
@@ -259,6 +261,16 @@ Lied {
 
     setDelayToDrySend { arg amt;
         delaySynth.set(\to_dry_send, amt);
+    }
+
+    // Scale the grain ptrSampleDelay for all 8 grains.
+    // Stored value takes effect on NEXT granular chain allocation (re-engage
+    // granular toggles after setting). To make it effective on an already-
+    // running chain, panic + re-engage.
+    setGrainDelayScale { arg scale;
+        grainDelayScale = scale;
+        ("Lied: grainDelayScale = " ++ scale
+            ++ " (effective on next granular allocation)").postln;
     }
 
     setReverbRoom { arg room;
@@ -342,10 +354,22 @@ Lied {
                 grainResLFOs[i].set(\rate, resRate);
             });
 
-            // Scrambled per-grain rates/durations/delays (8 grains)
+            // Wait for the 24 Ndef proxies above to fully allocate on the
+            // server before we map them into grain synths. Without this sync,
+            // the grain synth creation can race ahead of the Ndefs, producing
+            // a flood of "Node X not found" errors as /n_set targets nodes
+            // the server hasn't created yet.
+            server.sync;
+
+            // Scrambled per-grain rates/durations/delays (8 grains).
+            // Grain delays are scaled by grainDelayScale (default 1.0):
+            //   scale=1.0 → 8..64 sec range (Carter's Delay character)
+            //   scale=0.1 → 0.8..6.4 sec range (more immediate response)
             grainRates  = [1/4, 1/2, 1, 3/2, 2].scramble;
             grainDurs   = 8.collect({ arg i; beat_sec * (i + 1); }).scramble;
-            grainDelays = 8.collect({ arg i; server.sampleRate * (beat_sec * (i + 1)) * 16; }).scramble;
+            grainDelays = 8.collect({ arg i;
+                server.sampleRate * (beat_sec * (i + 1)) * 16 * grainDelayScale;
+            }).scramble;
 
             grainSynths = 8.collect({ arg n;
                 Synth(\liedGran, [
