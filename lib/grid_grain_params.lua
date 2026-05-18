@@ -149,16 +149,15 @@ function Grain.add_params()
     }
 
     -- Grain delay scale — multiplies the 8 grain ptrSampleDelay values.
-    -- Default 0.1 = grains read 0.8..6.4 sec back (responsive, hear granular
-    -- output within ~1 sec of feeding the buffer). Set to 1.0 for the original
-    -- Carter's Delay character (8..64 sec read offsets — long, evolving).
+    -- Default 1.0 = grains read 8..64 sec back (Carter's Delay character —
+    -- long, evolving). Set to ~0.1 for responsive granular output (~1 sec).
     -- Takes effect on NEXT granular allocation: toggle granular off + on (or
     -- panic + re-engage) to apply the new scale.
     params:add{
         type = 'control',
         id = 'grain_delay_scale',
         name = 'grain delay scale',
-        controlspec = controlspec.new(0.01, 2.0, 'lin', 0.01, 0.1, ''),
+        controlspec = controlspec.new(0.01, 2.0, 'lin', 0.01, 1.0, ''),
         action = function(v) engine.set_grain_delay_scale(v) end,
     }
 end
