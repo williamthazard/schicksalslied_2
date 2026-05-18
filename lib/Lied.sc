@@ -30,6 +30,12 @@ Lied {
     var <grainPanRates, <grainCutoffRates, <grainResRates;
     var <granularAllocated;
     var <grainDelayScale;  // multiplier for grain ptrSampleDelay (default 1.0)
+    // Pending granular setter values — applied at end of ensureGranularChain's
+    // fork. Solves the "user toggles granular before chain is alive → setter's
+    // .set fires on nil synth → amp stuck at 0" silent-grain bug.
+    var <pendingMicAmp, <pendingMicDryAmp, <pendingGranularOutAmp;
+    var <pendingFbAmp, <pendingFbBalance, <pendingFbHpFreq;
+    var <pendingFbNoise, <pendingFbSineLevel, <pendingFbSineHz;
 
     *new { arg server;
         ^super.new.init(server);
@@ -403,6 +409,20 @@ Lied {
                 ], granGrp);
             });
 
+            // Apply any pending setter values that were called BEFORE the
+            // chain was fully allocated (the off-by-fork race). This is what
+            // makes "toggle granular_out on" actually set granGrp's amp on the
+            // first toggle instead of requiring an off-then-on workaround.
+            if (pendingMicAmp.notNil)        { micSynth.set(\amp, pendingMicAmp); };
+            if (pendingMicDryAmp.notNil)     { micDrySynth.set(\amp, pendingMicDryAmp); };
+            if (pendingGranularOutAmp.notNil) { granGrp.set(\amp, pendingGranularOutAmp); };
+            if (pendingFbAmp.notNil)         { fbPatchMixSynth.set(\amp, pendingFbAmp); };
+            if (pendingFbBalance.notNil)     { fbPatchMixSynth.set(\balance, pendingFbBalance); };
+            if (pendingFbHpFreq.notNil)      { fbPatchMixSynth.set(\hpFreq, pendingFbHpFreq); };
+            if (pendingFbNoise.notNil)       { fbPatchMixSynth.set(\noiseLevel, pendingFbNoise); };
+            if (pendingFbSineLevel.notNil)   { fbPatchMixSynth.set(\sineLevel, pendingFbSineLevel); };
+            if (pendingFbSineHz.notNil)      { fbPatchMixSynth.set(\sineHz, pendingFbSineHz); };
+
             "Lied granular chain allocated.".postln;
         };
     }
@@ -444,46 +464,67 @@ Lied {
         recGrp = nil;
         granGrp = nil;
 
+        // Clear pending values so a future ensureGranularChain doesn't apply
+        // stale values from a previous lifecycle.
+        pendingMicAmp = nil;
+        pendingMicDryAmp = nil;
+        pendingGranularOutAmp = nil;
+        pendingFbAmp = nil;
+        pendingFbBalance = nil;
+        pendingFbHpFreq = nil;
+        pendingFbNoise = nil;
+        pendingFbSineLevel = nil;
+        pendingFbSineHz = nil;
+
         granularAllocated = false;
     }
 
     setMicAmp { arg amp;
+        pendingMicAmp = amp;
         if (amp > 0) { this.ensureGranularChain };
-        if (granularAllocated) { micSynth.set(\amp, amp) };
+        if (granularAllocated and: { micSynth.notNil }) { micSynth.set(\amp, amp) };
     }
 
     setMicDryAmp { arg amp;
+        pendingMicDryAmp = amp;
         if (amp > 0) { this.ensureGranularChain };
-        if (granularAllocated) { micDrySynth.set(\amp, amp) };
+        if (granularAllocated and: { micDrySynth.notNil }) { micDrySynth.set(\amp, amp) };
     }
 
     setGranularOutAmp { arg amp;
+        pendingGranularOutAmp = amp;
         if (amp > 0) { this.ensureGranularChain };
-        if (granularAllocated) { granGrp.set(\amp, amp) };
+        if (granularAllocated and: { granGrp.notNil }) { granGrp.set(\amp, amp) };
     }
 
     setFbPatchAmp { arg amp;
-        if (granularAllocated) { fbPatchMixSynth.set(\amp, amp) };
+        pendingFbAmp = amp;
+        if (granularAllocated and: { fbPatchMixSynth.notNil }) { fbPatchMixSynth.set(\amp, amp) };
     }
 
     setFbPatchBalance { arg balance;
-        if (granularAllocated) { fbPatchMixSynth.set(\balance, balance) };
+        pendingFbBalance = balance;
+        if (granularAllocated and: { fbPatchMixSynth.notNil }) { fbPatchMixSynth.set(\balance, balance) };
     }
 
     setFbPatchHpFreq { arg freq;
-        if (granularAllocated) { fbPatchMixSynth.set(\hpFreq, freq) };
+        pendingFbHpFreq = freq;
+        if (granularAllocated and: { fbPatchMixSynth.notNil }) { fbPatchMixSynth.set(\hpFreq, freq) };
     }
 
     setFbPatchNoiseLevel { arg lvl;
-        if (granularAllocated) { fbPatchMixSynth.set(\noiseLevel, lvl) };
+        pendingFbNoise = lvl;
+        if (granularAllocated and: { fbPatchMixSynth.notNil }) { fbPatchMixSynth.set(\noiseLevel, lvl) };
     }
 
     setFbPatchSineLevel { arg lvl;
-        if (granularAllocated) { fbPatchMixSynth.set(\sineLevel, lvl) };
+        pendingFbSineLevel = lvl;
+        if (granularAllocated and: { fbPatchMixSynth.notNil }) { fbPatchMixSynth.set(\sineLevel, lvl) };
     }
 
     setFbPatchSineHz { arg hz;
-        if (granularAllocated) { fbPatchMixSynth.set(\sineHz, hz) };
+        pendingFbSineHz = hz;
+        if (granularAllocated and: { fbPatchMixSynth.notNil }) { fbPatchMixSynth.set(\sineHz, hz) };
     }
 
     setGrainPanRate { arg grainIdx, rate;

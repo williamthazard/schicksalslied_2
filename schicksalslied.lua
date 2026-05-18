@@ -1180,15 +1180,23 @@ function init()
     params:bang()
 
     -- Push initial beat_sec to SC, then re-push on every clock_tempo change.
+    -- IMPORTANT: params:set_action REPLACES the existing action. Norns's
+    -- built-in clock_tempo action is the one that actually updates the
+    -- running clock; if we replace without calling it, params:set('clock_tempo')
+    -- updates the displayed value but the actual clock never changes — and
+    -- clock.get_tempo() / clock.get_beat_sec() keep returning stale values.
+    -- Solution: capture the prior action and call it first from our wrapper.
     engine.set_beat_sec(clock.get_beat_sec())
-    params:set_action('clock_tempo', function(bpm)
-        engine.set_beat_sec(clock.get_beat_sec())
-        -- if delay is beat-synced, re-fire delay_sync action so the seconds
-        -- value pushed to SC reflects the new tempo
-        if params.lookup['delay_sync'] ~= nil and params:get('delay_sync') ~= 1 then
-            params:set('delay_sync', params:get('delay_sync'))  -- re-fires action
-        end
-    end)
+    do
+        local prior = params:lookup_param('clock_tempo').action
+        params:set_action('clock_tempo', function(bpm)
+            if prior then prior(bpm) end  -- update the actual clock first
+            engine.set_beat_sec(clock.get_beat_sec())
+            if params.lookup['delay_sync'] ~= nil and params:get('delay_sync') ~= 1 then
+                params:set('delay_sync', params:get('delay_sync'))
+            end
+        end)
+    end
 
     Midi.init()
 
