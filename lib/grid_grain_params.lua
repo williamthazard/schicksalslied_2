@@ -20,7 +20,7 @@ local Grain = {}
 --   - 1 randomize-all trigger
 -- Total: 4 + 3 + 3 + 3 + 3 + 24 + 1 = 41
 function Grain.add_params()
-    params:add_group('granular_delay', 'granular delay', 41)
+    params:add_group('granular_delay', 'granular delay', 42)
 
     params:add_separator('master_amps_separator', 'master amps')
     -- The 3 master amps are added by schicksalslied.lua's add_params right
@@ -146,6 +146,20 @@ function Grain.add_params()
         id = 'randomize_grain_lfo_rates',
         name = 'randomize all grain LFO rates',
         action = function() Grain.randomize_all_rates() end,
+    }
+
+    -- Grain delay scale — multiplies the 8 grain ptrSampleDelay values.
+    -- Default 0.1 = grains read 0.8..6.4 sec back (responsive, hear granular
+    -- output within ~1 sec of feeding the buffer). Set to 1.0 for the original
+    -- Carter's Delay character (8..64 sec read offsets — long, evolving).
+    -- Takes effect on NEXT granular allocation: toggle granular off + on (or
+    -- panic + re-engage) to apply the new scale.
+    params:add{
+        type = 'control',
+        id = 'grain_delay_scale',
+        name = 'grain delay scale',
+        controlspec = controlspec.new(0.01, 2.0, 'lin', 0.01, 0.1, ''),
+        action = function(v) engine.set_grain_delay_scale(v) end,
     }
 end
 
