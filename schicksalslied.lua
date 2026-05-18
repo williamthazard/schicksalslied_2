@@ -1151,6 +1151,141 @@ local function add_params()
         LiedLfos.add_crow_lfos_group()
     end
 
+    -- ────────────────────────────────────────────────────────────────────
+    -- NO-GRID TEST GROUP — toggle cells + mic/granular controls without
+    -- a physical grid. Mirrors G.key behavior so testing matches grid use.
+    -- 16 synth + 16 samp_trig + 16 samp_rate + 13 oneshot + 3 mic/gran
+    -- + 1 assign + 1 all_off = 66
+    -- ────────────────────────────────────────────────────────────────────
+    params:add_group('no_grid_test', 'no-grid test', 66)
+
+    local function toggle_cell(x, y)
+        Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
+        if Sequencer.Toggled[x][y] and y == 2 then
+            Roles.ensure_allocated(x, y)
+        end
+        grid_dirty = true
+    end
+
+    -- 16 synth toggles (row 2)
+    for x = 1, 16 do
+        params:add{
+            type = 'trigger',
+            id = 'no_grid_synth_' .. x .. '_toggle',
+            name = 'toggle synth ' .. x,
+            action = function() toggle_cell(x, 2) end,
+        }
+    end
+
+    -- 16 sampler trigger-cell toggles (rows 4/6 odd cols)
+    for y = 4, 6, 2 do
+        for x = 1, 15, 2 do
+            params:add{
+                type = 'trigger',
+                id = 'no_grid_samp_trig_' .. x .. '_' .. y,
+                name = 'toggle sampler trig (' .. x .. ',' .. y .. ')',
+                action = function() toggle_cell(x, y) end,
+            }
+        end
+    end
+
+    -- 16 sampler rate-cell toggles (rows 4/6 even cols)
+    for y = 4, 6, 2 do
+        for x = 2, 16, 2 do
+            params:add{
+                type = 'trigger',
+                id = 'no_grid_samp_rate_' .. x .. '_' .. y,
+                name = 'toggle sampler rate (' .. x .. ',' .. y .. ')',
+                action = function() toggle_cell(x, y) end,
+            }
+        end
+    end
+
+    -- 13 one-shot toggles (row 8 cols 1-13)
+    for x = 1, 13 do
+        params:add{
+            type = 'trigger',
+            id = 'no_grid_oneshot_' .. x .. '_toggle',
+            name = 'toggle one-shot ' .. x,
+            action = function() toggle_cell(x, 8) end,
+        }
+    end
+
+    -- 3 mic/granular controls (row 8 cols 14/15/16) — mirror G.key logic
+    params:add{
+        type = 'trigger',
+        id = 'no_grid_mic_to_delay_toggle',
+        name = 'toggle mic to delay',
+        action = function()
+            Sequencer.Toggled[14][8] = not Sequencer.Toggled[14][8]
+            local on_value = params:get('mic_to_delay_amp')
+            engine.set_mic_amp(Sequencer.Toggled[14][8] and on_value or 0)
+            grid_dirty = true
+        end,
+    }
+    params:add{
+        type = 'trigger',
+        id = 'no_grid_granular_out_toggle',
+        name = 'toggle granular out',
+        action = function()
+            Sequencer.Toggled[15][8] = not Sequencer.Toggled[15][8]
+            local on_value = params:get('granular_out_amp')
+            engine.set_granular_out_amp(Sequencer.Toggled[15][8] and on_value or 0)
+            grid_dirty = true
+        end,
+    }
+    params:add{
+        type = 'trigger',
+        id = 'no_grid_mic_dry_toggle',
+        name = 'toggle mic dry',
+        action = function()
+            Sequencer.Toggled[16][8] = not Sequencer.Toggled[16][8]
+            local on_value = params:get('mic_dry_amp')
+            engine.set_mic_dry_amp(Sequencer.Toggled[16][8] and on_value or 0)
+            grid_dirty = true
+        end,
+    }
+
+    -- 1 "assign my_string to all toggled cells" trigger
+    params:add{
+        type = 'trigger',
+        id = 'no_grid_assign_my_string_to_toggled',
+        name = 'assign my_string to all toggled',
+        action = function()
+            if my_string == '' then
+                print('no-grid: my_string is empty, nothing to assign')
+                return
+            end
+            for x = 1, 16 do
+                for y = 2, 8, 2 do
+                    if Sequencer.Toggled[x][y] then
+                        Sequencer.assign(x, y, my_string)
+                    end
+                end
+            end
+            print('no-grid: assigned my_string to all toggled cells')
+        end,
+    }
+
+    -- 1 "all off" trigger — resets every Toggled state + zeros mic/granular
+    params:add{
+        type = 'trigger',
+        id = 'no_grid_all_off',
+        name = 'all off',
+        action = function()
+            for x = 1, 16 do
+                for y = 2, 8, 2 do
+                    Sequencer.Toggled[x][y] = false
+                end
+            end
+            engine.set_mic_amp(0)
+            engine.set_granular_out_amp(0)
+            engine.set_mic_dry_amp(0)
+            grid_dirty = true
+            print('no-grid: all off')
+        end,
+    }
+
 end
 
 -- ========================================================================
