@@ -28,7 +28,7 @@ function VoiceParams.add_sampler_block(slot)
             options = { 'off', 'on' },
             default = 1,
             action = function(idx)
-                Roles.Sequencer.Toggled[trigger_col][trigger_row] = (idx == 2)
+                _G.GlobalSequencer.Toggled[trigger_col][trigger_row] = (idx == 2)
                 grid_dirty = true
             end,
         }
@@ -148,7 +148,7 @@ function VoiceParams.add_oneshot_block(slot)
         options = { 'off', 'on' },
         default = 1,
         action = function(idx)
-            Roles.Sequencer.Toggled[slot][8] = (idx == 2)
+            _G.GlobalSequencer.Toggled[slot][8] = (idx == 2)
             grid_dirty = true
         end,
     }
@@ -299,7 +299,7 @@ function VoiceParams.add_row2_cell_block(x)
         default = 1,  -- 'off'
         action = function(idx)
             local on = (idx == 2)
-            Roles.Sequencer.Toggled[x][2] = on
+            _G.GlobalSequencer.Toggled[x][2] = on
             if on then Roles.ensure_allocated(x, 2) end
             grid_dirty = true
         end,

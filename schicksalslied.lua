@@ -1169,6 +1169,13 @@ function init()
     Roles.Sequencer = Sequencer
     Sequencer.dispatch_fn = function(x, y) Roles.dispatch(x, y) end
 
+    -- Norns's `include` doesn't cache across calls — each `include 'lib/X'`
+    -- returns a fresh table. So Roles.Sequencer set above is only visible in
+    -- THIS file's local Roles. Expose Sequencer globally so other sub-modules
+    -- (voice_params.lua, grid_grain_params.lua, etc.) can access it without
+    -- the cross-include identity problem.
+    _G.GlobalSequencer = Sequencer
+
     add_params()
     params:bang()
 

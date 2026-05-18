@@ -34,7 +34,7 @@ function Grain.add_params()
         options = { 'off', 'on' },
         default = 1,
         action = function(idx)
-            Roles.Sequencer.Toggled[14][8] = (idx == 2)
+            _G.GlobalSequencer.Toggled[14][8] = (idx == 2)
             local on_value = params:get('mic_to_delay_amp')
             engine.set_mic_amp((idx == 2) and on_value or 0)
             grid_dirty = true
@@ -47,7 +47,7 @@ function Grain.add_params()
         options = { 'off', 'on' },
         default = 1,
         action = function(idx)
-            Roles.Sequencer.Toggled[15][8] = (idx == 2)
+            _G.GlobalSequencer.Toggled[15][8] = (idx == 2)
             local on_value = params:get('granular_out_amp')
             engine.set_granular_out_amp((idx == 2) and on_value or 0)
             grid_dirty = true
@@ -60,7 +60,7 @@ function Grain.add_params()
         options = { 'off', 'on' },
         default = 1,
         action = function(idx)
-            Roles.Sequencer.Toggled[16][8] = (idx == 2)
+            _G.GlobalSequencer.Toggled[16][8] = (idx == 2)
             local on_value = params:get('mic_dry_amp')
             engine.set_mic_dry_amp((idx == 2) and on_value or 0)
             grid_dirty = true
