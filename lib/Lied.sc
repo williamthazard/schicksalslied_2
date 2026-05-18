@@ -235,8 +235,14 @@ Lied {
     }
 
     setBeatSec { arg newBeatSec;
-        beat_sec = newBeatSec;
-        ("Lied: beat_sec = " ++ beat_sec).postln;
+        // Only act + print if the value actually changed. Norns fires the
+        // clock_tempo action multiple times per encoder tick (delay_sync
+        // re-fire + internal subsystem broadcasts), each calling this with
+        // the same value — produces noisy duplicate prints otherwise.
+        if (beat_sec != newBeatSec) {
+            beat_sec = newBeatSec;
+            ("Lied: beat_sec = " ++ beat_sec).postln;
+        };
     }
 
     setOutAmp { arg amp;
