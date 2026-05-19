@@ -192,7 +192,7 @@ Server.default.sync;
 kernel.ensureGranularChain;
 Server.default.sync;
 0.5.wait;
-("  8 grain synths: " ++ kernel.grainSynths.size).postln;
+("  " ++ Lied.grainCount ++ " grain synths: " ++ kernel.grainSynths.size).postln;
 ("  delayBuf frames: " ++ kernel.delayBuf.numFrames).postln;
 ("  micBus channels: " ++ kernel.micBus.numChannels).postln;
 "  All allocated, amp=0 (silent). Granular audio test next.".postln;
@@ -248,7 +248,7 @@ kernel.setGranularOutAmp(0);
     "Test 18: grain LFO rate live update...".postln;
     kernel.setMicAmp(0.0001);  // tiny amp triggers lazy alloc
     2.0.wait;  // wait for fork{} to complete granular alloc
-    8.do({ arg i;
+    Lied.grainCount.do({ arg i;
         kernel.setGrainPanRate(i, 16);
         kernel.setGrainCutoffRate(i, 32);
         kernel.setGrainResRate(i, 8);

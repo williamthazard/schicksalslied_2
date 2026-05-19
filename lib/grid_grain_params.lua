@@ -16,11 +16,12 @@ local Grain = {}
 --   - 3 master amp state toggles (mic_to_delay_state, granular_out_state, mic_dry_state)
 --   - 3 fb patch surface (feedback_amp, feedback_balance, feedback_hpf)
 --   - 3 fb patch advanced (noise_inject_level, sine_inject_level, sine_inject_freq)
---   - 24 grain LFO rates (8 grains × 3 params)
+--   - 12 grain LFO rates (4 grains × 3 params)
 --   - 1 randomize-all trigger
--- Total: 4 + 3 + 3 + 3 + 3 + 24 + 1 = 41
+--   - 1 grain_delay_scale
+-- Total: 4 + 3 + 3 + 3 + 3 + 12 + 1 + 1 = 30
 function Grain.add_params()
-    params:add_group('granular_delay', 'granular delay', 42)
+    params:add_group('granular_delay', 'granular delay', 30)
 
     params:add_separator('master_amps_separator', 'master amps')
     -- The 3 master amps are added by schicksalslied.lua's add_params right
@@ -117,7 +118,7 @@ function Grain.add_params()
 
     params:add_separator('grain_lfo_rates', 'grain LFO rates')
 
-    for n = 0, 7 do
+    for n = 0, 3 do
         params:add{
             type = 'control',
             id = 'grain_' .. n .. '_pan_rate',
@@ -148,7 +149,7 @@ function Grain.add_params()
         action = function() Grain.randomize_all_rates() end,
     }
 
-    -- Grain delay scale — multiplies the 8 grain ptrSampleDelay values.
+    -- Grain delay scale — multiplies the grain ptrSampleDelay values.
     -- Default 1.0 = grains read 8..64 sec back (Carter's Delay character —
     -- long, evolving). Set to ~0.1 for responsive granular output (~1 sec).
     -- Takes effect on NEXT granular allocation: toggle granular off + on (or
@@ -164,7 +165,7 @@ end
 
 -- Randomize every grain LFO rate. Updates params (which trigger their actions).
 function Grain.randomize_all_rates()
-    for n = 0, 7 do
+    for n = 0, 3 do
         params:set('grain_' .. n .. '_pan_rate', math.random(10, 6400) / 100)
         params:set('grain_' .. n .. '_cutoff_rate', math.random(10, 6400) / 100)
         params:set('grain_' .. n .. '_res_rate', math.random(10, 6400) / 100)

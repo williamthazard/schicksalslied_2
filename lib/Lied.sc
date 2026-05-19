@@ -1,5 +1,6 @@
 // lib/Lied.sc — schicksalslied 2.0 SC kernel
 Lied {
+    classvar <grainCount = 4;  // Number of grain synths. 4 = lower CPU; 8 = original Carter's character.
     var <server;
     var <dryBus, <reverbBus, <delayBus;
     var <granularBus;          // stereo bus voices route to when bus_routing = 'granular'
@@ -232,9 +233,9 @@ Lied {
             outGroup);
 
         granularAllocated = false;
-        grainPanRates    = Array.fill(8, { rrand(1, 64) });
-        grainCutoffRates = Array.fill(8, { rrand(1, 64) });
-        grainResRates    = Array.fill(8, { rrand(1, 64) });
+        grainPanRates    = Array.fill(grainCount, { rrand(1, 64) });
+        grainCutoffRates = Array.fill(grainCount, { rrand(1, 64) });
+        grainResRates    = Array.fill(grainCount, { rrand(1, 64) });
         grainDelayScale  = 1.0;
 
         "Lied initialized.".postln;
@@ -275,7 +276,7 @@ Lied {
         delaySynth.set(\to_dry_send, amt);
     }
 
-    // Scale the grain ptrSampleDelay for all 8 grains.
+    // Scale the grain ptrSampleDelay for all grains.
     // Stored value takes effect on NEXT granular chain allocation (re-engage
     // granular toggles after setting). To make it effective on an already-
     // running chain, panic + re-engage.
@@ -302,7 +303,7 @@ Lied {
     // -----------------------------------------------------------------
     // Called the first time any of mic_amp / mic_dry_amp / granular_out_amp
     // is set to a non-zero value. Allocates the delay buffer, mic chain,
-    // recorder, fbPatchMix, and 8 grain synths (reduced from 16 for CPU).
+    // recorder, fbPatchMix, and grainCount grain synths.
     // Idempotent — subsequent calls are no-ops once granularAllocated.
 
     ensureGranularChain {
@@ -315,7 +316,7 @@ Lied {
         // window where micSynth is still nil. Acceptable trade-off vs the
         // alternative of double-allocation.
         granularAllocated = true;
-        "Lied: allocating granular chain (8 grains)...".postln;
+        ("Lied: allocating granular chain (" ++ grainCount ++ " grains)...").postln;
 
         fork {
             // Buffer + buses
@@ -341,11 +342,11 @@ Lied {
             ptrSynth        = Synth(\liedPtr,        [\buf, delayBuf, \out, ptrBus],      ptrGrp);
             recSynth        = Synth(\liedRec,        [\ptrIn, ptrBus, \micIn, micBus, \buf, delayBuf], recGrp);
 
-            // Grain LFOs (8 each)
-            grainPanLFOs    = Array.fill(8, { 0 });
-            grainCutoffLFOs = Array.fill(8, { 0 });
-            grainResLFOs    = Array.fill(8, { 0 });
-            8.do({ arg i;
+            // Grain LFOs (grainCount each)
+            grainPanLFOs    = Array.fill(grainCount, { 0 });
+            grainCutoffLFOs = Array.fill(grainCount, { 0 });
+            grainResLFOs    = Array.fill(grainCount, { 0 });
+            grainCount.do({ arg i;
                 var panRate = grainPanRates[i];
                 var cutoffRate = grainCutoffRates[i];
                 var resRate = grainResRates[i];
@@ -366,24 +367,24 @@ Lied {
                 grainResLFOs[i].set(\rate, resRate);
             });
 
-            // Wait for the 24 Ndef proxies above to fully allocate on the
+            // Wait for the Ndef proxies above to fully allocate on the
             // server before we map them into grain synths. Without this sync,
             // the grain synth creation can race ahead of the Ndefs, producing
             // a flood of "Node X not found" errors as /n_set targets nodes
             // the server hasn't created yet.
             server.sync;
 
-            // Scrambled per-grain rates/durations/delays (8 grains).
+            // Scrambled per-grain rates/durations/delays (grainCount grains).
             // Grain delays are scaled by grainDelayScale (default 1.0):
             //   scale=1.0 → 8..64 sec range (Carter's Delay character)
             //   scale=0.1 → 0.8..6.4 sec range (more immediate response)
             grainRates  = [1/4, 1/2, 1, 3/2, 2].scramble;
-            grainDurs   = 8.collect({ arg i; beat_sec * (i + 1); }).scramble;
-            grainDelays = 8.collect({ arg i;
+            grainDurs   = grainCount.collect({ arg i; beat_sec * (i + 1); }).scramble;
+            grainDelays = grainCount.collect({ arg i;
                 server.sampleRate * (beat_sec * (i + 1)) * 16 * grainDelayScale;
             }).scramble;
 
-            grainSynths = 8.collect({ arg n;
+            grainSynths = grainCount.collect({ arg n;
                 Synth(\liedGran, [
                     \amp, 0,
                     \buf, delayBuf,
@@ -402,7 +403,7 @@ Lied {
                     \grainEnv, -1,
                     \ptrBus, ptrBus,
                     \ptrSampleDelay, grainDelays[n],
-                    \ptrRandSamples, server.sampleRate * (beat_sec * ((n % 8) + 1)) * 2,
+                    \ptrRandSamples, server.sampleRate * (beat_sec * ((n % grainCount) + 1)) * 2,
                     \minPtrDelay, grainDelays[n],
                     \cutoff, grainCutoffLFOs[n],
                     \resonance, grainResLFOs[n]
@@ -528,6 +529,7 @@ Lied {
     }
 
     setGrainPanRate { arg grainIdx, rate;
+        if (grainIdx >= grainCount) { ^this };  // out of range, ignore
         grainPanRates[grainIdx] = rate;
         if (granularAllocated and: { grainPanLFOs[grainIdx].notNil }) {
             grainPanLFOs[grainIdx].set(\rate, rate);
@@ -535,6 +537,7 @@ Lied {
     }
 
     setGrainCutoffRate { arg grainIdx, rate;
+        if (grainIdx >= grainCount) { ^this };  // out of range, ignore
         grainCutoffRates[grainIdx] = rate;
         if (granularAllocated and: { grainCutoffLFOs[grainIdx].notNil }) {
             grainCutoffLFOs[grainIdx].set(\rate, rate);
@@ -542,6 +545,7 @@ Lied {
     }
 
     setGrainResRate { arg grainIdx, rate;
+        if (grainIdx >= grainCount) { ^this };  // out of range, ignore
         grainResRates[grainIdx] = rate;
         if (granularAllocated and: { grainResLFOs[grainIdx].notNil }) {
             grainResLFOs[grainIdx].set(\rate, rate);
