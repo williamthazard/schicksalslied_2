@@ -5,13 +5,13 @@ a poetry sequencer for monome norns
 > "What is a poet? A poet is an unhappy being whose heart is torn by secret sufferings, but whose lips are so strangely formed that when the sighs and the cries escape them, they sound like beautiful music."
 > — Søren Kierkegaard, *Either/Or*
 
-type at a keyboard or pick a line from history, assign it to a grid cell, toggle the cell on. each character of the line becomes a stream of bytes that drive the cell's synthesis, sampling, MIDI, or crow output. different cells play different lines simultaneously at their own rates. fully operable from grid, params menu, or MIDI controller.
+type on a keyboard or pick a line from history, assign it to a grid cell, toggle the cell on. each character of the line becomes a stream of bytes that drive the cell's synthesis, sampling, MIDI, or crow output. different cells play different lines simultaneously at their own rates. fully operable from grid, params menu, or MIDI controller.
 
 ## install
 
 copy this folder to `/home/we/dust/code/schicksalslied/` on your norns.
 
-**reboot norns** so the `Lied` SuperCollider engine registers, then load from SELECT.
+**reboot norns** so the `Lied` SuperCollider engine registers, then load using SELECT.
 
 ## hardware
 
@@ -97,7 +97,6 @@ standard norns PSET via PARAMETERS → PSET. history and per-cell string assignm
 
 - start sparse — one voice + one sampler + granular is plenty
 - use per-cell **phase** for backbeat patterns (kick on `rate=2 phase=0`, snare on `rate=2 phase=1`)
-- match `global scale` + `root note` to your text — minor for melancholic, chromatic for any-character-goes
 - save often: PSET captures everything including typed history
 
 ## troubleshooting
@@ -109,14 +108,12 @@ standard norns PSET via PARAMETERS → PSET. history and per-cell string assignm
 
 ## documentation
 
-a complete 20-chapter developer tutorial covering every line of the script lives in [`docs/tutorial/`](docs/tutorial/). useful if you want to understand the architecture, modify the script, or build your own lied.
+a complete 20-chapter developer tutorial covering every line of the script lives in [`docs/tutorial/`](docs/tutorial/). useful if you want to understand the architecture, modify the script, or use it as a starting point for something completely different.
 
 ## sibling lieder
 
-developed in order: krähenlied → schicksalslied 1.0 → superLied → näherinlied → schicksalslied 2.0.
-
-- [krähenlied](https://github.com/williamthazard/krahenlied) — first lied. crow + druid; the byte-to-musical-value mappings used by 2.0's crow/JF/w/ roles originate here.
-- [schicksalslied 1.0](https://github.com/williamthazard/schicksalslied) — first norns lied. single global text field driving 6 SC voices + 3 softcut + crow.
+- [krähenlied](https://github.com/williamthazard/krahenlied) — crow + druid; the byte-to-musical-value mappings used by 2.0's crow/JF/w/ roles originate here.
+- [schicksalslied 1.0](https://github.com/williamthazard/schicksalslied) — single global text field driving 6 SC voices + 3 softcut + crow.
 - [superLied](https://github.com/williamthazard/superLied) — mac SC port. introduced the 8-row grid layout that 2.0 inherits.
 - [näherinlied](https://github.com/williamthazard/naherinlied) — seamstress + SC port. parallel mac-friendly performance variant.
 
