@@ -123,7 +123,7 @@ local function load_text_file(path)
     io.input(path)
     for line in io.lines() do
         if #line > 0 then
-            table.insert(history, line)
+            Sequencer.add_history(line)
         end
     end
     grid_dirty = true
@@ -166,14 +166,14 @@ keyboard.code = function(code, val)
         -- ENTER promotes displayed_string to my_string, adds to history,
         -- clears displayed_string (per spec §7 text input flow)
         my_string = displayed_string
-        table.insert(history, displayed_string)
+        Sequencer.add_history(displayed_string)
         displayed_string = ""
         history_index = #history
         new_line = true
         grid_dirty = true
     elseif keyboard.ctrl() then
         -- Ctrl chord: remove last history entry, clear displayed_string
-        table.remove(history, #history)
+        Sequencer.remove_last_history()
         history_index = #history
         displayed_string = ""
         grid_dirty = true
@@ -183,6 +183,31 @@ end
 -- ========================================================================
 -- GRID HANDLER (spec §3 + §11)
 -- ========================================================================
+
+-- Map a toggle-row cell to the params menu's state param that controls it.
+-- All toggle-row cells have a state param now (sampler rate cells use the
+-- per-cell `cell_X_Y_state` added by add_rate_cell_state_block; sampler
+-- trigger cells use the per-slot `sampler_N_state`; row 2 + one-shots use
+-- their respective per-cell/per-slot params). Used by g.key (keep params UI
+-- in sync with grid) and panic (clears the UI state too).
+local function state_param_id_for(x, y)
+    if y == 2 then
+        return 'cell_' .. x .. '_2_state'
+    elseif y == 4 then
+        if x % 2 == 1 then return 'sampler_' .. math.floor((x + 1) / 2) .. '_state' end
+        return 'cell_' .. x .. '_' .. y .. '_state'  -- rate cell
+    elseif y == 6 then
+        if x % 2 == 1 then return 'sampler_' .. (math.floor((x + 1) / 2) + 8) .. '_state' end
+        return 'cell_' .. x .. '_' .. y .. '_state'  -- rate cell
+    elseif y == 8 then
+        if x <= 13 then return 'oneshot_' .. x .. '_state'
+        elseif x == 14 then return 'mic_to_delay_state'
+        elseif x == 15 then return 'granular_out_state'
+        elseif x == 16 then return 'mic_dry_state'
+        end
+    end
+    return nil
+end
 
 g.key = function(x, y, z)
     Sequencer.Momentary[x][y] = (z == 1)
@@ -211,30 +236,20 @@ g.key = function(x, y, z)
         end
 
     elseif y == 2 or y == 4 or y == 6 or y == 8 then
-        -- Toggle row
+        -- Toggle row. Route through the corresponding state param when one
+        -- exists so the params menu stays in sync with the grid. The state
+        -- param's action handles writing Sequencer.Toggled + any side
+        -- effects (ensure_allocated for row 2; engine.set_mic_amp etc. for
+        -- the mic/granular toggles on row 8 cols 14-16). Cells without a
+        -- state param (sampler rate cells on rows 4/6 even cols) fall back
+        -- to the direct Toggled write.
         if z == 1 then
-            -- Row 8 cols 14-16: special on/off for mic/granular amps
-            if y == 8 and x >= 14 and x <= 16 then
-                Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
-                local on_value
-                local set_fn
-                if x == 14 then
-                    on_value = params:get('mic_to_delay_amp')
-                    set_fn = function(v) engine.set_mic_amp(v) end
-                elseif x == 15 then
-                    on_value = params:get('granular_out_amp')
-                    set_fn = function(v) engine.set_granular_out_amp(v) end
-                else  -- x == 16
-                    on_value = params:get('mic_dry_amp')
-                    set_fn = function(v) engine.set_mic_dry_amp(v) end
-                end
-                set_fn(Sequencer.Toggled[x][y] and on_value or 0)
+            local state_id = state_param_id_for(x, y)
+            if state_id then
+                local cur = params:get(state_id) or 1
+                params:set(state_id, (cur == 1) and 2 or 1)
             else
-                -- Regular sequencer toggle
                 Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
-                if y == 2 and Sequencer.Toggled[x][y] then
-                    Roles.ensure_allocated(x, y)
-                end
             end
         end
 
@@ -324,10 +339,18 @@ end
 -- ========================================================================
 
 local function panic()
-    -- Clear all toggle state so the sequencer stops dispatching
+    -- Clear all toggle state so the sequencer stops dispatching. Route through
+    -- the state param when one exists so the params UI also reflects "off"
+    -- (otherwise the menu would show stale on-state after a panic). Rate cells
+    -- (rows 4/6 even cols) have no state param, so clear Toggled directly.
     for x = 1, 16 do
         for y = 2, 8, 2 do
-            Sequencer.Toggled[x][y] = false
+            local state_id = state_param_id_for(x, y)
+            if state_id then
+                params:set(state_id, 1)  -- 1 = 'off'
+            else
+                Sequencer.Toggled[x][y] = false
+            end
         end
     end
     -- Free SC voice instances (will be re-allocated lazily when user re-toggles cells)
@@ -855,11 +878,27 @@ local function add_params()
     -- ────────────────────────────────────────────────────────────────────
     params:add_group('master_fx', 'master fx', 9)
 
+    -- Beat-sync options for the delay tap. Monotonic by value so encoder
+    -- scrolling moves smoothly through musically related divisions:
+    -- standard binary, triplets (1/3, 2/3, 4/3, 8/3), dotted (3/16, 3/8, 3/4,
+    -- 3/2, 3), and odd-numbered beats (3, 5, 7) for polyrhythmic delays.
+    -- Capped at 8 beats: CombL.ar in lib/Lied.sc has maxdelaytime = 8s, so
+    -- 8-beat sync fits at any tempo down to 60 BPM (8 × 60/60 = 8s).
+    local DELAY_SYNC_LABELS = {
+        'free', '1/16', '1/12', '1/8', '1/6', '3/16', '1/4', '1/3', '3/8',
+        '1/2', '2/3', '3/4', '1', '4/3', '3/2', '2', '8/3', '3', '4', '5',
+        '6', '7', '8',
+    }
+    local DELAY_SYNC_BEATS = {
+        1/16, 1/12, 1/8, 1/6, 3/16, 1/4, 1/3, 3/8,
+        1/2, 2/3, 3/4, 1, 4/3, 3/2, 2, 8/3, 3, 4, 5,
+        6, 7, 8,
+    }
     params:add{
         type = 'option',
         id = 'delay_sync',
         name = 'delay sync',
-        options = { 'free', '1/16', '1/8', '1/4', '1/2', '1', '2', '4' },
+        options = DELAY_SYNC_LABELS,
         default = 1,  -- 'free'
         action = function(idx)
             if idx == 1 then  -- free
@@ -867,9 +906,7 @@ local function add_params()
                 engine.set_delay_time(params:get('delay_time'))
             else
                 params:hide('delay_time')
-                -- Map option idx 2..8 to beats {0.0625, 0.125, 0.25, 0.5, 1, 2, 4}
-                local beats_for_idx = { 0.0625, 0.125, 0.25, 0.5, 1, 2, 4 }
-                local beats = beats_for_idx[idx - 1]
+                local beats = DELAY_SYNC_BEATS[idx - 1]
                 engine.set_delay_time(beats * clock.get_beat_sec())
             end
             _menu.rebuild_params()
@@ -879,7 +916,7 @@ local function add_params()
         type = 'control',
         id = 'delay_time',
         name = 'delay time',
-        controlspec = controlspec.new(0.01, 2, 'lin', 0.01, 0.3, 's'),
+        controlspec = controlspec.new(0.01, 8, 'lin', 0.01, 0.3, 's'),
         action = function(v)
             if params:get('delay_sync') == 1 then  -- only apply in free mode
                 engine.set_delay_time(v)
@@ -938,11 +975,11 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
-    -- ROW-2 CELLS GROUP (16 cells × 45 params + 1 separator/cell + 4 bulk = 740)
-    -- Each cell: 1 separator + 1 state + 1 role + 14 seq_mode + 9 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize = 45
+    -- ROW-2 CELLS GROUP (16 cells × 48 params + 4 bulk = 772)
+    -- Each cell: 1 separator + 1 state + 1 role + 1 string + 15 seq_mode + 9 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize + 1 unused = 48
     -- shared: amp, amp_slew, pan, pan_slew, polyphony, dry_send, reverb_send, delay_send, granular_send
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'synths', 16 * 46 + 4)
+    params:add_group('row_2_cells', 'synths', 16 * 48 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
@@ -990,14 +1027,15 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- LOOPING SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 13 voice + 1 trigger-cell sep + 14 trigger seq_mode
-    --            + 13 position value_mode + 13 duration value_mode
-    --            + 1 rate-cell sep + 14 rate seq_mode + 13 rate value_mode = 84
+    -- Each slot: 1 sep + 1 file + 13 voice + 1 trigger-cell sep + 1 trigger string
+    --            + 15 trigger seq_mode + 13 position value_mode + 13 duration value_mode
+    --            + 1 rate-cell sep + 1 rate state + 1 rate string + 15 rate seq_mode
+    --            + 13 rate value_mode = 89
     -- voice: state + amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
     --        dry_send, reverb_send, delay_send, granular_send, randomize = 13
-    -- 16 slots × 84 + 4 bulk triggers = 1348
+    -- 16 slots × 89 + 4 bulk triggers = 1428
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('samplers', 'looping samplers', 16 * 84 + 4)
+    params:add_group('samplers', 'looping samplers', 16 * 89 + 4)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 16 do
@@ -1024,6 +1062,9 @@ local function add_params()
                         engine.sampler_clear(slot)
                     elseif check_sample_duration('looping sampler', slot, path) then
                         engine.sampler_load(slot, path)
+                        -- Load creates a fresh SC instance at SynthDef defaults;
+                        -- push current Lua param values so they survive reloads.
+                        VoiceParams.reapply_sampler(slot)
                     end
                     -- if duration check fails, no engine call; warning already printed
                 end,
@@ -1033,14 +1074,17 @@ local function add_params()
             params:add_separator(
                 string.format('sampler_%d_trigger_cell_separator', slot),
                 string.format('trigger cell (%d,%d)', trigger_col, trigger_row))
-            VoiceParams.add_cell_seq_mode_block(trigger_col, trigger_row)         -- 14
+            VoiceParams.add_cell_string_block(trigger_col, trigger_row)           -- 1
+            VoiceParams.add_cell_seq_mode_block(trigger_col, trigger_row)         -- 15
             VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'position', 0, 0.9)   -- 13
             VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'duration', 0.001, 0.1) -- 13
 
             params:add_separator(
                 string.format('sampler_%d_rate_cell_separator', slot),
                 string.format('rate cell (%d,%d)', rate_col, rate_row))
-            VoiceParams.add_cell_seq_mode_block(rate_col, rate_row)               -- 14
+            VoiceParams.add_rate_cell_state_block(rate_col, rate_row)             -- 1
+            VoiceParams.add_cell_string_block(rate_col, rate_row)                 -- 1
+            VoiceParams.add_cell_seq_mode_block(rate_col, rate_row)               -- 15
             VoiceParams.add_cell_value_mode_block(rate_col, rate_row, 'rate', -16, 16)            -- 13
         end
 
@@ -1084,10 +1128,11 @@ local function add_params()
             id = 'randomize_all_sampler_rates',
             name = 'randomize all looping sampler rates',
             action = function()
+                local Timing = include 'lib/timing'
                 for y = 4, 6, 2 do
                     for x = 2, 16, 2 do
                         params:set(string.format('cell_%d_%d_rate_fixed_value', x, y),
-                            -16 + math.random() * 32)
+                            math.random(#Timing.RATE_OPTIONS))
                     end
                 end
             end,
@@ -1096,12 +1141,12 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- ONE-SHOT SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 13 voice + 14 seq_mode + 13 rate value_mode = 42
+    -- Each slot: 1 separator + 1 file + 13 voice + 1 string + 15 seq_mode + 13 rate value_mode = 44
     -- voice: state + amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
     --        dry_send, reverb_send, delay_send, granular_send, randomize = 13
-    -- 13 slots × 42 + 2 bulk triggers = 548
+    -- 13 slots × 44 + 2 bulk triggers = 574
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 42 + 2)
+    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 44 + 2)
     do
         local VoiceParams = include 'lib/voice_params'
         for slot = 1, 13 do
@@ -1115,12 +1160,14 @@ local function add_params()
                         engine.oneshot_clear(slot)
                     elseif check_sample_duration('one-shot', slot, path) then
                         engine.oneshot_load(slot, path)
+                        VoiceParams.reapply_oneshot(slot)
                     end
                     -- if duration check fails, no engine call; warning already printed
                 end,
             }
             VoiceParams.add_oneshot_block(slot)                               -- 9
-            VoiceParams.add_cell_seq_mode_block(slot, 8)                      -- 14
+            VoiceParams.add_cell_string_block(slot, 8)                        -- 1
+            VoiceParams.add_cell_seq_mode_block(slot, 8)                      -- 15
             VoiceParams.add_cell_value_mode_block(slot, 8, 'rate', -16, 16)   -- 13
         end
 
@@ -1138,9 +1185,10 @@ local function add_params()
             id = 'randomize_all_oneshot_rates',
             name = 'randomize all one-shot rates',
             action = function()
+                local Timing = include 'lib/timing'
                 for x = 1, 13 do
                     params:set(string.format('cell_%d_8_rate_fixed_value', x),
-                        -16 + math.random() * 32)
+                        math.random(#Timing.RATE_OPTIONS))
                 end
             end,
         }
@@ -1175,8 +1223,78 @@ function init()
     -- (voice_params.lua, grid_grain_params.lua, etc.) can access it without
     -- the cross-include identity problem.
     _G.GlobalSequencer = Sequencer
+    -- Same cross-include identity workaround for Roles: voice_params.lua and
+    -- other helpers each `include 'lib/cell_roles'` and get a fresh Roles
+    -- table, so writes to Roles.cell_role from those modules wouldn't reach
+    -- the dispatcher (which uses schicksalslied's Roles). Expose the canonical
+    -- Roles instance globally.
+    _G.GlobalRoles = Roles
+
+    -- Make Sequencer.history alias schicksalslied's local `history` table so
+    -- the cell string params (built in voice_params, consumed in sequencer)
+    -- share state with the keyboard/grid history flow. Then install the
+    -- params-side hooks via bind_sequencer BEFORE add_params so closures in
+    -- add_cell_string_block resolve correctly.
+    Sequencer.history = history
+    do
+        local VoiceParams = include 'lib/voice_params'
+        VoiceParams.bind_sequencer(Sequencer)
+    end
 
     add_params()
+
+    -- PSET sidecar: history[] and Sequencer._cell_assigned_strings are
+    -- script-side tables, NOT params, so the built-in PSET round-trip drops
+    -- them. Without this, cell_X_Y_string params would re-load their saved
+    -- option indices but the lookup into Seq.history would yield nil and the
+    -- cells would end up empty. We write/read a sibling `<pset>.lieddata`
+    -- file alongside the PSET on save/load/delete.
+    local function sidecar_path(pset_filename)
+        return pset_filename .. '.lieddata'
+    end
+    params.action_write = function(filename, _name, _pset_number)
+        local data = {
+            history = history,
+            assigned = Sequencer._cell_assigned_strings,
+        }
+        tab.save(data, sidecar_path(filename))
+    end
+    params.action_read = function(filename, _silent, _pset_number)
+        local path = sidecar_path(filename)
+        local data = util.file_exists(path) and tab.load(path) or nil
+        if type(data) == 'table' then
+            for i = #history, 1, -1 do history[i] = nil end
+            if type(data.history) == 'table' then
+                for i, s in ipairs(data.history) do history[i] = s end
+            end
+            history_index = #history
+            -- Clear stale assignments, then route each saved entry through
+            -- Sequencer.assign so the live Seq[x][y] Sequins gets :settable'd
+            -- (display state alone isn't enough — playback reads Seq directly).
+            for k in pairs(Sequencer._cell_assigned_strings) do
+                Sequencer._cell_assigned_strings[k] = nil
+            end
+            if type(data.assigned) == 'table' then
+                for k, s in pairs(data.assigned) do
+                    local cx, cy = k:match('^(%d+)_(%d+)$')
+                    if cx and cy then
+                        Sequencer.assign(tonumber(cx), tonumber(cy), s, true)
+                    end
+                end
+            end
+        end
+        -- Refresh unconditionally: legacy PSETs (no sidecar) may have set
+        -- cell_X_Y_string option indices that point into a now-empty option
+        -- list — refresh snaps them back to (none) to match actual cell state.
+        local VoiceParams = include 'lib/voice_params'
+        VoiceParams.refresh_all_cell_string_params()
+        grid_dirty = true
+    end
+    params.action_delete = function(filename, _name, _pset_number)
+        local path = sidecar_path(filename)
+        if util.file_exists(path) then os.execute('rm "' .. path .. '"') end
+    end
+
     params:bang()
 
     -- Push initial beat_sec to SC, then re-push on every clock_tempo change.

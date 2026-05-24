@@ -2,7 +2,7 @@
 // The full command surface lands in Sub-plan B. This skeleton just instantiates
 // the Lied kernel so Norns will recognize the engine when loaded.
 Engine_Lied : CroneEngine {
-    var kernel;
+    var <kernel;  // public getter for REPL diagnostics
 
     *new { arg context, doneCallback;
         ^super.new(context, doneCallback);

@@ -1,65 +1,132 @@
-# schicksalslied
+# schicksalslied 2.0
+
 a poetry sequencer for monome norns
 
-<i>note: you will need to restart norns after installing this script, in order for the LiedMotor synth engine to install</i>
+> "What is a poet? A poet is an unhappy being whose heart is torn by secret sufferings, but whose lips are so strangely formed that when the sighs and the cries escape them, they sound like beautiful music."
+> — Søren Kierkegaard, *Either/Or*
 
-“What is a poet? A poet is an unhappy being whose heart is torn by secret sufferings, but whose lips are so strangely formed that when the sighs and the cries escape them, they sound like beautiful music.”<br>
--Søren Kierkegaard, Either/Or
+type at a keyboard or pick a line from history, assign it to a grid cell, toggle the cell on. each character of the line becomes a stream of bytes that drive the cell's synthesis, sampling, MIDI, or crow output. different cells play different lines simultaneously at their own rates. fully operable from grid, params menu, or MIDI controller.
 
-<b>Entering Text</b>
+## install
 
-Schicksalslied begins with a text field. You can input text into the field in two ways:
-1) by attaching a keyboard to one of norns's usb ports and typing (20 characters max)
-2) loading a .txt file into norns and importing it into schicksalslied using the "text file" feature in the params menu
+copy this folder to `/home/we/dust/code/schicksalslied/` on your norns.
 
-For method 1, you can hit enter on your keyboard to send your line to schicksalslied. Each line you enter will be added to history. History items can be accessed by hitting the "up" arrow on your keyboard. The currently-selected history item will appear in the text field. Then you can hit enter again to make that line the active line.<br>
-<br>
-History items can also be accessed with a grid. When a line is added to history, a square on the grid will be soft-lit. That square holds the line. You can access the line again by pressing that button. When the button is held down, the line it holds will be displayed in schicksalslied's text field. When the button is released, that line becomes the active line. It will not be re-entered into history. You can also combine lines with grid, by holding down multiple buttons and releasing them simultaneously. The lines will be combined in the order in which the buttons are pressed. Combined lines are not added to history.<br>
-<br>
-For method 2, your imported .txt file will be broken up by line breaks. There is no character limit for lines entered in this way. Each line will be added to history and will get its own square on the grid. If your file exceeds 128 lines, only the first 128 lines will be available on the grid. But no line will be active by default. You'll need to select one. You can do this with a keyboard or a grid, using the methods described above. If you're looking for somewhere to store your .txt files on norns, there's a "text files" folder located within the "lib" folder for schicksalslied. There's one poem there already, to get you started.<br>
-<br>
-<b>Turning Text into Music</b>
+**reboot norns** so the `Lied` SuperCollider engine registers, then load from SELECT.
 
-Once you've entered your text, there are three ways to turn it into music. They can all be used simultaneously.
-1) with the LiedMotor synth engine
-2) with imported audio files
-3) with crow
+## hardware
 
-<i>LiedMotor</i><br>
-Once you've got an active line, you can activate the LiedMotor engine by pressing K3. But by default, you won't hear any sound yet. You'll need to choose one or more voices. LiedMotor has six voices:
-1) sinsin (an FM voice with a sine wave modulated by another sine wave)
-2) trisin (an FM voice with a triangle wave modulated by a sine wave)
-3) ringer (a pinged resonant filter with variable decay)
-4) tritri (an FM voice with two oscillators based on the Mannequins Mangrove module, patched "square to air")
-5) karplu (a karplus-strong-style physical modeling string synthesis voice)
-6) resonz (a pinged resonant filter without variable decay)
+- monome norns (any model)
+- monome grid (optional — script is fully operable via PARAMETERS without one)
+- USB keyboard (for text entry)
+- optional: MIDI controller, crow, w/syn, w/del, w/tape, just friends
 
-You can activate each of these voices by turning up its "amp" parameter in the LiedMotor section of the parameters menu. Each of the voices interprets your text in its own way. You might think of them as a jazz combo "playing the changes." In this sense, a "chord" would correspond to a line. You can change between chords by entering more lines or choosing different lines from history using the "up" arrow or grid button presses.<br>
-<br>
-You can also shape the timbre of each voice in the LiedMotor section of the parameters menu. There are a lot of parameters. MIDI mapping can be very helpful for managing them all. You can also modulate any of these parameters with LFOs, using the LFOs section of the parameters menu.<br>
-<br>
-<i>Audio File</i><br>
-You can import up to 3 audio files into schicksalslied using the “audio file” features in the params menu. Then you can start your files playing with K2. Schicksalslied will use norns’s softcut features to manipulate your audio files in ways that are determined by the text in the line you’ve entered. There are three manipulated-audio voices available. Each interprets your line to manipulate audio in its own way. You can load three different files or load one file into all 3 slots, to traverse different sections of a single recording. The three voices’ levels can be adjusted in the params menu.<br>
-<br>
-<i>Crow</i><br>
-You can activate crow features using K1. This works in essentially the same way as the krahenlied script for crow and druid. Documentation for krahenlied can be found at https://github.com/williamthazard/krahenlied/blob/main/README.md. As with krahenlied, the text you've entered will determine the following:
-1) pitch (v/8) from crow outputs 1 & 3
-2) slew time between pitches from outputs 1 & 3
-3) AR envelope shapes from outputs 2 & 4
-4) sequences for 6 Just Friends synth voices
-5) level for each note event on Just Friends in synthesis mode
-6) repeats and divisions for Just Friends geode rhythms
-7) quantization value for Just Friends in geode mode
-8) virtual voltages to be sent to the run jack on Just Friends
-9) playback speed and direction for w/tape
-10) creation, activation, and deactivation of loops on w/tape
-11) playhead position on w/tape
-12) clock synch divisions for all of the above
+## the grid
 
-Unlike krahenlied, schicksalsleid can also play w/syn’s 4 voices or a karplus-strong string synthesizer in w/del mode. W/syn’s “this” and “that” inputs will be set up to modulate its “ramp” and “curve” parameters, respectively, by default. Other timbral parameters can be shaped in the parameters menu. They can also be modulated with LFOs.<br>
+```
+1 ─ history: 128 typed/loaded lines
+2 ─ voice cells × 16 (TriSin, Ringer, crow, JF, w/, MIDI, ...)
+3 ─ assign row for row 2
+4 ─ looping samplers 1–8 (odd cols = trigger, even = rate)
+5 ─ assign row for row 4
+6 ─ looping samplers 9–16 (odd cols = trigger, even = rate)
+7 ─ assign row for row 6
+8 ─ one-shots 1–13 + mic→delay / granular out / mic dry (cols 14/15/16)
+```
 
-<b>A Note on Clock Divs</b>
+rows 2/4/6/8 are toggles — press to start/stop. rows 3/5/7 are momentary — press to assign the staged line to the cell above.
 
-You'll notice that, in addition to the sections mentioned above, there is also a parameters menu section titled "Clock Divs." This allows you to choose the pace at which a given voice (engine, softcut, or crow) picks its notes from your line. For example, a bass player might not play notes as frequently as a saxophone player. Or they might play more! It's up to you.<br>
-<br>
-Note that for the clock div settings, higher numbers mean <i>longer</i> (as in, longer pauses between notes), not faster.
+## hardware controls
+
+```
+K1: (preserves system back/menu)   E1: scroll history
+K2: append history line             E2: global amp
+K3: ENTER (stage + add to history)  E3: BPM
+```
+
+## voice roles
+
+each of the 16 row-2 cells can be assigned one of 11 roles via PARAMETERS → synths → cell N → role.
+
+- **TriSin** — FM voice (triangle carrier, sine modulator)
+- **Ringer** — pinged resonant filter, percussive
+- **crow 1+2** / **crow 3+4** — pitch CV + AR env on a pair of crow outputs
+- **JF** / **JF run** / **JF quantize** — just friends via ii (synthesis, RUN, quantize)
+- **w/syn** — w/syn over ii
+- **w/del** — karplus-strong via w/del
+- **w/tape looper** — w/tape loop choreography
+- **MIDI** — note on/off to the configured device + channel
+
+defaults alternate blocks of 4: TriSin × 4, Ringer × 4, TriSin × 4, Ringer × 4.
+
+## samplers and one-shots
+
+load files via PARAMETERS → looping samplers → sampler N → file (10-minute max per file). identical files loaded into multiple slots share one buffer.
+
+sampler **trigger cells** (odd cols on rows 4/6) emit start + end positions per fire. **rate cells** (even cols, paired with the trigger to their left) set playback rate independently — negative for reverse, 0 for freeze. one-shots (row 8 cols 1-13) play the whole buffer per trigger.
+
+## granular delay
+
+row 8 col 14 toggles mic into the delay buffer. col 15 toggles granular output. col 16 toggles a dry mic passthrough.
+
+any voice can route into the granular chain via its `granular send` param. turn up `feedback amp` (PARAMETERS → granular delay → feedback patch) to make the chain self-modulating.
+
+## sequencer modes
+
+every cell's rate is determined by its **seq mode** (PARAMETERS → … → cell N → seq mode):
+
+- **lied** — rate derived from the cell's text bytes (`byte / byte × scale`)
+- **fixed** — a constant musical fraction (1/16 through 64 beats)
+- **seq** — cycle through 1-8 user-defined step durations
+- **random** — random fraction in a configurable range
+
+sampler position/duration and rate cells each have parallel **value modes** with the same four options.
+
+## master FX
+
+PARAMETERS → master fx: delay (sync'd or free, up to 8 sec), reverb (room + damp + amp), per-voice send levels per cell. delay routes to both dry and reverb at independent send levels.
+
+## MIDI
+
+PARAMETERS → midi input: pick device + role (TriSin or Ringer) for a dedicated voice. PARAMETERS → midi: pick the output device for the `MIDI` voice role. standard norns MIDI mapping works on every param.
+
+## PSET
+
+standard norns PSET via PARAMETERS → PSET. history and per-cell string assignments save to a sidecar `.lieddata` file alongside the .pset; PSET 01 autoloads on script start.
+
+## tips
+
+- start sparse — one voice + one sampler + granular is plenty
+- use per-cell **phase** for backbeat patterns (kick on `rate=2 phase=0`, snare on `rate=2 phase=1`)
+- match `global scale` + `root note` to your text — minor for melancholic, chromatic for any-character-goes
+- save often: PSET captures everything including typed history
+
+## troubleshooting
+
+- **loud drone on load + JackDriver alloc error** → SC memory issue; SLEEP → K1-hold to reboot, redeploy.
+- **synths fire once then silence** → matron clock scheduler wedged. SLEEP → K1-hold (NOT `system → restart`) for a hard power cycle.
+- **cell strings don't restore from PSET** → check that `schicksalslied-NN.pset.lieddata` exists alongside the `.pset`.
+- **"Buffer UGen: no buffer data" on sampler fire** → check matron log for the load message; common causes: file not found, unsupported format, exceeds 10-minute cap.
+
+## documentation
+
+a complete 20-chapter developer tutorial covering every line of the script lives in [`docs/tutorial/`](docs/tutorial/). useful if you want to understand the architecture, modify the script, or build your own lied.
+
+## sibling lieder
+
+developed in order: krähenlied → schicksalslied 1.0 → superLied → näherinlied → schicksalslied 2.0.
+
+- [krähenlied](https://github.com/williamthazard/krahenlied) — first lied. crow + druid; the byte-to-musical-value mappings used by 2.0's crow/JF/w/ roles originate here.
+- [schicksalslied 1.0](https://github.com/williamthazard/schicksalslied) — first norns lied. single global text field driving 6 SC voices + 3 softcut + crow.
+- [superLied](https://github.com/williamthazard/superLied) — mac SC port. introduced the 8-row grid layout that 2.0 inherits.
+- [näherinlied](https://github.com/williamthazard/naherinlied) — seamstress + SC port. parallel mac-friendly performance variant.
+
+## acknowledgments
+
+- Brian Crabtree, who initiated the Norns project.
+- Ezra Buchla for help refining Carter's Delay (the granular delay design used here, which I built as a toy for my then-6-year-old cousin Carter).
+- Dani Derks and Robbie Lyman for ongoing mentorship and guidance on norns development.
+- The [lines](https://llllllll.co) community for the wealth of shared knowledge that makes scripts like this one possible.
+
+## license
+
+see [LICENSE](LICENSE).

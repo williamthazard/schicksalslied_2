@@ -10,6 +10,7 @@
 --     Momentary[x][y] for LED feedback during press.
 
 local Sequins = require 'sequins'
+local Timing  = include 'lib/timing'
 local Sequencer = {}
 
 -- ========================================================================
@@ -81,12 +82,50 @@ function Sequencer.string_to_bytes(s)
     return t
 end
 
+-- Gridless-friendly string assignment surface.
+-- history is the text-line list owned by schicksalslied.lua, shared so the
+-- per-cell `cell_X_Y_string` param can list slots and so post-assignment
+-- sync can map a cell's content back to a slot index.
+Sequencer.history = {}
+
+-- Per-cell record of the string most recently assigned, keyed by "x_y".
+-- Tracks the original string (not the byte sequence) so we can re-resolve
+-- which slot the cell points to whenever history changes.
+Sequencer._cell_assigned_strings = {}
+
+-- Refresh hook wired by schicksalslied.lua's init. Called whenever history
+-- mutates so cell string params can rebuild their option lists.
+Sequencer.on_history_changed_fn = nil
+
+function Sequencer.add_history(str)
+    if str == nil or #str == 0 then return end
+    table.insert(Sequencer.history, str)
+    if Sequencer.on_history_changed_fn then Sequencer.on_history_changed_fn() end
+end
+
+function Sequencer.remove_last_history()
+    if #Sequencer.history > 0 then
+        table.remove(Sequencer.history, #Sequencer.history)
+        if Sequencer.on_history_changed_fn then Sequencer.on_history_changed_fn() end
+    end
+end
+
+-- Hook for params-side reaction when a cell's string is (re-)assigned.
+-- voice_params installs this so the cell's string param can re-sync.
+Sequencer.on_cell_assigned_fn = nil
+
 -- Assign a new byte sequence to the cell's Sequins instance.
 -- Used by odd-row grid presses (rows 3, 5, 7) which target the cell ABOVE
--- in the corresponding even row (y - 1).
-function Sequencer.assign(x, y, str)
+-- in the corresponding even row (y - 1), and by the `cell_X_Y_string`
+-- param's action. `silent=true` skips the params-side sync hook so the
+-- param's own action can call this without re-firing itself.
+function Sequencer.assign(x, y, str, silent)
     if Sequencer.Seq[x] and Sequencer.Seq[x][y] then
         Sequencer.Seq[x][y]:settable(Sequencer.string_to_bytes(str))
+    end
+    Sequencer._cell_assigned_strings[x .. '_' .. y] = str
+    if not silent and Sequencer.on_cell_assigned_fn then
+        Sequencer.on_cell_assigned_fn(x, y)
     end
 end
 
@@ -108,10 +147,36 @@ end
 Sequencer.dispatch_fn = nil
 
 -- Returns a coroutine body for cell [x][y]. Runs forever; gates on Toggled + Paused.
+--
+-- Two clock-sync strategies, chosen per-tick by current seq_mode:
+--
+--   modes 1 (lied/sequins) + 2 (fixed): absolute beat-grid sync. Fires land on
+--   the rate's natural multiples relative to clock zero. Preserves naherinlied
+--   semantics and makes the per-cell seq_phase param meaningful (backbeat).
+--
+--   modes 3 (user_seq) + 4 (random): relative sync. Each fire is exactly the
+--   computed rate (in beats) from the previous fire. Fixes the [1, 2] pattern
+--   bug where absolute sync would collapse onto every integer beat — because
+--   sync(2) from beat 1 lands on beat 2, not beat 3. The trick is to pass
+--   offset = current_beat % rate so the alignment "moves with us."
 local function step_for(x, y)
+    local phase_id = 'cell_' .. x .. '_' .. y .. '_seq_phase'
+    local mode_id  = 'cell_' .. x .. '_' .. y .. '_seq_mode'
     return function()
         while true do
-            clock.sync(Sequencer.get_rate(x, y))
+            local rate = Sequencer.get_rate(x, y)
+            local mode_idx = params.lookup[mode_id] and params:get(mode_id) or 1
+            if mode_idx == 3 or mode_idx == 4 then
+                local now = clock.get_beats()
+                clock.sync(rate, now % rate)
+            else
+                local phase = params.lookup[phase_id] and params:get(phase_id) or 0
+                if phase > 0 then
+                    clock.sync(rate, phase)
+                else
+                    clock.sync(rate)
+                end
+            end
             if Sequencer.Toggled[x][y] and (not Sequencer.Paused) then
                 if Sequencer.dispatch_fn then
                     Sequencer.dispatch_fn(x, y)
@@ -281,16 +346,17 @@ function Sequencer.get_rate(x, y)
         if den == 0 then return scale end
         return (num / den) * scale
     elseif mode_idx == 2 then  -- fixed
-        return params:get(prefix .. 'fixed_value') or 1
+        return Timing.value(params:get(prefix .. 'fixed_value')) or 1
     elseif mode_idx == 3 then  -- user_seq
         return Sequencer._user_seq_step(x, y)
     elseif mode_idx == 4 then  -- random
-        -- random_min/max controlspecs are floats (beats, exp 0.0625..16/64),
-        -- so use math.random() + scale rather than math.random(lo, hi) which
-        -- requires integer args.
-        local lo = params:get(prefix .. 'random_min') or 1
-        local hi = params:get(prefix .. 'random_max') or 16
-        return math.random() * (hi - lo) + lo
+        -- random_min/max are option indices into Timing.OPTIONS, so picking
+        -- a random index in [min, max] gives a musical-grid output without
+        -- needing post-process snapping.
+        local lo_idx = params:get(prefix .. 'random_min') or 1
+        local hi_idx = params:get(prefix .. 'random_max') or #Timing.OPTIONS
+        if lo_idx > hi_idx then lo_idx, hi_idx = hi_idx, lo_idx end
+        return Timing.value(math.random(lo_idx, hi_idx))
     end
     return 1
 end
@@ -306,7 +372,8 @@ function Sequencer._user_seq_step(x, y)
     local num_steps = params:get(prefix .. 'num_steps') or 4
     local cursor = (Sequencer._user_seq_cursors[x][y] or 0) % num_steps + 1
     Sequencer._user_seq_cursors[x][y] = cursor
-    return params:get(prefix .. 'step_' .. cursor .. '_duration') or 1
+    local idx = params:get(prefix .. 'step_' .. cursor .. '_duration')
+    return Timing.value(idx) or 1
 end
 
 -- ========================================================================
@@ -365,11 +432,22 @@ function Sequencer.get_value(x, y, value_kind)
     end
 
     -- Mode option indices: 1=lied, 2=fixed, 3=user sequence, 4=random
+    -- Rate kind stores option indices into Timing.RATE_OPTIONS (musical
+    -- fractions incl. negatives + 0). Position/duration store raw floats.
+    local rate_mode = (value_kind == 'rate')
     local mode_idx = params:get(mode_param_id)
     if mode_idx == 1 then return nil  -- lied
-    elseif mode_idx == 2 then return params:get(prefix .. 'fixed_value')
+    elseif mode_idx == 2 then
+        local raw = params:get(prefix .. 'fixed_value')
+        return rate_mode and Timing.rate_value(raw) or raw
     elseif mode_idx == 3 then return Sequencer._user_value_step(x, y, value_kind)
     elseif mode_idx == 4 then
+        if rate_mode then
+            local lo_idx = params:get(prefix .. 'random_min') or 1
+            local hi_idx = params:get(prefix .. 'random_max') or #Timing.RATE_OPTIONS
+            if lo_idx > hi_idx then lo_idx, hi_idx = hi_idx, lo_idx end
+            return Timing.rate_value(math.random(lo_idx, hi_idx))
+        end
         local lo = params:get(prefix .. 'random_min') or 0
         local hi = params:get(prefix .. 'random_max') or 1
         return math.random() * (hi - lo) + lo
@@ -390,7 +468,9 @@ function Sequencer._user_value_step(x, y, value_kind)
     local cursor = (Sequencer._user_value_cursors[x][y][value_kind] or 0)
         % num_steps + 1
     Sequencer._user_value_cursors[x][y][value_kind] = cursor
-    return params:get(prefix .. 'step_' .. cursor .. '_value')
+    local raw = params:get(prefix .. 'step_' .. cursor .. '_value')
+    if value_kind == 'rate' then return Timing.rate_value(raw) end
+    return raw
 end
 
 -- Reset every cell's Seq_Mode to its naherinlied-derived default.

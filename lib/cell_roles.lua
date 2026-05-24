@@ -284,14 +284,14 @@ local function dispatch_sampler_trigger(x, y, seq)
 end
 
 local function dispatch_sampler_rate(x, y, seq)
-    -- Rate cells don't trigger directly; their sequins feeds the PAIRED
-    -- trigger cell. But the rate cell also has a clock loop. On its tick,
-    -- it could update the sampler's rate param directly.
+    -- Rate cell ticks on its own clock loop and writes to the paired sampler's
+    -- rate param. In lied mode, derive from the cell's own sequins (byte / 36
+    -- yields ~0.89..3.5 across the printable ASCII range, matching one-shot).
     local slot = sampler_slot_for(x - 1, y)
     local rate_value = Roles.Sequencer.get_value(x, y, 'rate')
     local rate
     if rate_value == nil then
-        rate = 1  -- lied mode default for current implementation
+        rate = seq() / 36
     else
         rate = rate_value
     end

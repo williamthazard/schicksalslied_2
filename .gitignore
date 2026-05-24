@@ -1,1 +1,20 @@
+# macOS noise
 .DS_Store
+
+# Build artifacts (regenerate locally with the tar -czf in deploy notes)
+*.tar.gz
+
+# Dev-only SC files
+test.scd
+
+# Dev-only symlinks (point at local SC Extensions for in-IDE editing)
+mac_ext/
+
+# Norns runtime / user data (created on Norns, not part of source)
+data/
+*.pset
+*.lieddata
+*.pmap
+
+# User audio (depends on the user's local files)
+audio/

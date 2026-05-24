@@ -92,7 +92,12 @@ Lied {
             arg inBus, dryOut, reverbOut, delayTime = 0.3, decayTime = 0.5,
                 amp = 1.0, amp_slew = 0.1, to_reverb_send = 1, to_dry_send = 0;
             var sig = In.ar(inBus, 2);
-            var del = CombL.ar(sig, 2.0, delayTime, decayTime);
+            // maxdelaytime = 8s. CombL allocates from SC's real-time memory
+            // pool, which is small on Norns — 16s here caused JackDriver
+            // alloc-fail (~6MB stereo buffer). 8s (~3.1MB stereo) is half the
+            // failure threshold and covers 8-beat sync at any tempo down to
+            // 60 BPM. Matches the cap in DELAY_SYNC_BEATS in schicksalslied.lua.
+            var del = CombL.ar(sig, 8.0, delayTime, decayTime);
             var ampSmoothed = amp.lag(amp_slew);
             Out.ar(dryOut,    del * ampSmoothed * to_dry_send.lag(0.05));
             Out.ar(reverbOut, del * ampSmoothed * to_reverb_send.lag(0.05));
@@ -221,11 +226,17 @@ Lied {
         server.sync;
 
         // --- Instantiate master FX (persistent) ---
-        delaySynth  = Synth.new(\liedDelay,
-            [\inBus, delayBus, \dryOut, dryBus, \reverbOut, reverbBus],
-            fxGroup);
+        // Order matters: SC groups execute head→tail, and audio buses clear
+        // between blocks. delaySynth's writes to reverbBus must happen BEFORE
+        // reverbSynth reads from it in the same block — otherwise the delay's
+        // contribution to reverbBus gets zeroed before reverb can use it.
+        // addToHead pushes each new synth in front of the previous one, so
+        // instantiating reverb first then delay produces order: delay, reverb.
         reverbSynth = Synth.new(\liedReverb,
             [\inBus, reverbBus, \dryOut, dryBus],
+            fxGroup);
+        delaySynth  = Synth.new(\liedDelay,
+            [\inBus, delayBus, \dryOut, dryBus, \reverbOut, reverbBus],
             fxGroup);
         outGroup    = Group.after(fxGroup);
         outSynth    = Synth.new(\liedOut,
@@ -682,13 +693,20 @@ Lied {
                     if (samplerInstances[slot].notNil) {
                         this.clearSampler(slot);
                     };
-                    // Reuse cached buffer if this path is already loaded
+                    // Reuse cached buffer if this path is already loaded.
+                    // The \loading sentinel handles the case where two forks
+                    // start loading the same file concurrently: the second
+                    // one polls until the first one finishes, then re-reads
+                    // the cache instead of starting a redundant Buffer.read
+                    // (which would orphan a Buffer object outside the cache).
+                    while ({ bufferCache[filePath] == \loading }) { 0.05.wait };
                     buf = bufferCache[filePath];
                     if (buf.notNil) {
-                        bufferRefCounts[filePath] = bufferRefCounts[filePath] + 1;
+                        bufferRefCounts[filePath] = (bufferRefCounts[filePath] ? 0) + 1;
                         ("Sampler " ++ slot ++ " reusing cached buffer: " ++ filePath
                             ++ " (refs=" ++ bufferRefCounts[filePath] ++ ")").postln;
                     } {
+                        bufferCache[filePath] = \loading;
                         buf = Buffer.read(server, filePath);
                         server.sync;
                         bufferCache[filePath] = buf;
@@ -720,17 +738,24 @@ Lied {
             inst.free;
             samplerInstances[slot] = nil;
             pendingSamplerParams[slot] = nil;  // clear stale pending
-            // Decrement buffer refcount; free buffer when no slot references it
-            if (path.notNil) {
+            // Decrement buffer refcount; free buffer when no slot references it.
+            // Defensive checks: if the cache got out of sync (e.g., across a
+            // PSET load that re-fired loads in odd orders), refCounts[path]
+            // may be nil. Treat that as "already cleaned up" and skip silently
+            // rather than throwing on `nil - 1`.
+            if (path.notNil and: { bufferRefCounts[path].notNil }) {
                 bufferRefCounts[path] = bufferRefCounts[path] - 1;
                 if (bufferRefCounts[path] <= 0) {
-                    bufferCache[path].free;
+                    if (bufferCache[path].notNil
+                        and: { bufferCache[path] != \loading }) {
+                        bufferCache[path].free;
+                    };
                     bufferCache[path] = nil;
                     bufferRefCounts[path] = nil;
                     ("Buffer freed: " ++ path).postln;
                 };
-                samplerPaths[slot] = nil;
             };
+            samplerPaths[slot] = nil;
             ("Sampler " ++ slot ++ " cleared").postln;
         };
     }
@@ -778,12 +803,14 @@ Lied {
                     if (oneShotInstances[slot].notNil) {
                         this.clearOneShot(slot);
                     };
+                    while ({ bufferCache[filePath] == \loading }) { 0.05.wait };
                     buf = bufferCache[filePath];
                     if (buf.notNil) {
-                        bufferRefCounts[filePath] = bufferRefCounts[filePath] + 1;
+                        bufferRefCounts[filePath] = (bufferRefCounts[filePath] ? 0) + 1;
                         ("OneShot " ++ slot ++ " reusing cached buffer: " ++ filePath
                             ++ " (refs=" ++ bufferRefCounts[filePath] ++ ")").postln;
                     } {
+                        bufferCache[filePath] = \loading;
                         buf = Buffer.read(server, filePath);
                         server.sync;
                         bufferCache[filePath] = buf;
@@ -815,16 +842,20 @@ Lied {
             inst.free;
             oneShotInstances[slot] = nil;
             pendingOneShotParams[slot] = nil;  // clear stale pending
-            if (path.notNil) {
+            // See clearSampler comment — same defensive shape.
+            if (path.notNil and: { bufferRefCounts[path].notNil }) {
                 bufferRefCounts[path] = bufferRefCounts[path] - 1;
                 if (bufferRefCounts[path] <= 0) {
-                    bufferCache[path].free;
+                    if (bufferCache[path].notNil
+                        and: { bufferCache[path] != \loading }) {
+                        bufferCache[path].free;
+                    };
                     bufferCache[path] = nil;
                     bufferRefCounts[path] = nil;
                     ("Buffer freed: " ++ path).postln;
                 };
-                oneShotPaths[slot] = nil;
             };
+            oneShotPaths[slot] = nil;
             ("OneShot " ++ slot ++ " cleared").postln;
         };
     }
@@ -872,6 +903,13 @@ Lied {
         samplerInstances.do { |inst| inst.free };
         oneShotInstances.do { |inst| inst.free };
         if (granularAllocated) { this.freeGranularChain };
+        // Free cached sample buffers; without this, every script reload leaks
+        // the buffers on the SC server (the Lied object dies, the Buffer
+        // objects in the cache go out of scope, but their server-side
+        // allocations persist until SC restart).
+        bufferCache.do { |buf|
+            if (buf.notNil and: { buf != \loading }) { buf.free };
+        };
         delaySynth.free;
         reverbSynth.free;
         outSynth.free;
