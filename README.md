@@ -122,9 +122,9 @@ developed in order: krähenlied → schicksalslied 1.0 → superLied → näheri
 
 ## acknowledgments
 
-- Brian Crabtree, who initiated the Norns project.
-- Ezra Buchla for help refining Carter's Delay (the granular delay design used here, which I built as a toy for my then-6-year-old cousin Carter).
-- Dani Derks and Robbie Lyman for ongoing mentorship and guidance on norns development.
+- tehn for initiating norns.
+- Ezra Buchla for help refining Carter's Delay (the granular delay design used here).
+- Dani Derks, Jonathan Snyder, Zack Scholl, and Robbie Lyman for ongoing mentorship, friendship, and guidance on norns development.
 - The [lines](https://llllllll.co) community for the wealth of shared knowledge that makes scripts like this one possible.
 
 ## license
