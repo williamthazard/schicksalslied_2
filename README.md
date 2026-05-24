@@ -22,6 +22,8 @@ copy this folder to `/home/we/dust/code/schicksalslied/` on your norns.
 
 ## the grid
 
+![grid layout](assets/grid.png)
+
 ```
 1 ─ history: 128 typed/loaded lines
 2 ─ voice cells × 16 (TriSin, Ringer, crow, JF, w/, MIDI, ...)
