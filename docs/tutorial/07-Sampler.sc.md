@@ -1,6 +1,6 @@
 # Chapter 07 — `lib/Sampler.sc`
 
-The looping audio-file voice with A/B Phasor crossfade. **212 lines.** The most sophisticated voice class in the project.
+The looping audio-file voice with A/B Phasor crossfade. **218 lines.** The most sophisticated voice class in the project.
 
 ## What you'll learn
 
@@ -13,16 +13,16 @@ The key feature: **clickless retriggers between different start/end regions** vi
 
 ## Prerequisites within the tutorial
 
-- Chapter 05 (voice-pool pattern, `*initClass + StartUp.add`, persistent-voice retrigger).
+- Chapter 05 (voice-pool pattern, `*initClass` + `*addSynthDefs`, persistent-voice retrigger).
 
 ## Source sections
 
 1. Header + class declaration (lines 1-12)
-2. `*initClass` + SynthDef (lines 13-104)
-3. `*new` + `init` (lines 106-146)
-4. `triggerVoice` (lines 148-164)
-5. `trigger`, `adjustVoice`, `setParam` (lines 166-192)
-6. `resetVoices` and `free` (lines 194-211)
+2. `*initClass` + `*addSynthDefs` (the SynthDef) (lines 13-110)
+3. `*new` + `init` (lines 112-152)
+4. `triggerVoice` (lines 154-170)
+5. `trigger`, `adjustVoice`, `setParam` (lines 172-198)
+6. `resetVoices` and `free` (lines 200-217)
 
 ## 1. Header and class declaration
 
@@ -44,36 +44,39 @@ Sampler {
 
 The header notes the port: naherinlied's `\PlayBufPlayer` SynthDef became this class's main SynthDef. The voice-pool pattern (chapter 05) is applied to it — same `voiceKeys`/`globalParams`/`voiceParams`/`singleVoices` structure plus a `buffer` field holding the Buffer reference.
 
-## 2. `*initClass` + SynthDef
+## 2. `*initClass` + `*addSynthDefs` (the SynthDef)
 
 ```supercollider
     *initClass {
         voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
-        StartUp.add {
-            var s = Server.default;
+    }
 
-            s.waitForBoot {
+    // Added by Lied.init once Crone has booted the server — never from a
+    // StartUp hook, which runs at every sclang start and could boot scsynth
+    // before Crone had set it up.
+    *addSynthDefs {
+        var s = Server.default;
 
-                SynthDef(\Sampler, {
-                    arg bufnum = 0,
-                        rate = 1,
-                        start = 0,
-                        end = 1,
-                        t_trig = 0,
-                        loops = 1,
-                        amp = 0.2,
-                        amp_slew = 0.05,
-                        pan = 0,
-                        pan_slew = 1,
-                        cutoff = 12000,
-                        cutoff_slew = 0.05,
-                        resonance = 1,
-                        rateSlew = 0.1,
-                        dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
-                        dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
+        SynthDef(\Sampler, {
+            arg bufnum = 0,
+                rate = 1,
+                start = 0,
+                end = 1,
+                t_trig = 0,
+                loops = 1,
+                amp = 0.2,
+                amp_slew = 0.05,
+                pan = 0,
+                pan_slew = 1,
+                cutoff = 12000,
+                cutoff_slew = 0.05,
+                resonance = 1,
+                rateSlew = 0.1,
+                dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
+                dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 ```
 
-**Lines 13-36**: class init + SynthDef args.
+**Lines 13-39**: `*initClass`, then `*addSynthDefs` and SynthDef args. As in TriSin (chapter 05), `*initClass` only sets `voiceKeys`; the SynthDef lives in `*addSynthDefs`, which `Lied.init` calls once Crone has booted the server (a `StartUp.add`/`waitForBoot` hook here could boot scsynth before Crone configured it).
 
 24 args. Notable ones:
 
@@ -88,18 +91,18 @@ The header notes the port: naherinlied's `\PlayBufPlayer` SynthDef became this c
 ### The A/B crossfade machinery
 
 ```supercollider
-                    var snd, snd2, pos, pos2, frames, duration, env, sig, ampSig,
-                        startA, endA, startB, endB, crossfade, aOrB, filtered;
+            var snd, snd2, pos, pos2, frames, duration, env, sig, ampSig,
+                startA, endA, startB, endB, crossfade, aOrB, filtered;
 
-                    aOrB = ToggleFF.kr(t_trig);
-                    startA = Latch.kr(start, aOrB);
-                    endA   = Latch.kr(end,   aOrB);
-                    startB = Latch.kr(start, 1 - aOrB);
-                    endB   = Latch.kr(end,   1 - aOrB);
-                    crossfade = Lag.ar(K2A.ar(aOrB), 0.1);
+            aOrB = ToggleFF.kr(t_trig);
+            startA = Latch.kr(start, aOrB);
+            endA   = Latch.kr(end,   aOrB);
+            startB = Latch.kr(start, 1 - aOrB);
+            endB   = Latch.kr(end,   1 - aOrB);
+            crossfade = Lag.ar(K2A.ar(aOrB), 0.1);
 ```
 
-**Lines 37-46**: the A/B crossfade machinery — the most novel construction in the file.
+**Lines 40-48**: the A/B crossfade machinery — the most novel construction in the file.
 
 - **`aOrB = ToggleFF.kr(t_trig)`** — a flip-flop. Every time `t_trig` fires (transitions 0→1), `aOrB` toggles between 0 and 1.
 
@@ -122,25 +125,27 @@ The effect: when you trigger the synth twice, the first trigger captures one set
 ### Rate + duration + envelope
 
 ```supercollider
-                    rate = Lag.kr(rate, rateSlew) * BufRateScale.kr(bufnum);
-                    frames = BufFrames.kr(bufnum);
-                    duration = frames * (end - start) / rate.abs / s.sampleRate * loops;
+            rate = Lag.kr(rate, rateSlew) * BufRateScale.kr(bufnum);
+            frames = BufFrames.kr(bufnum);
+            duration = frames * (end - start) / rate.abs / s.sampleRate * loops;
 
-                    env = EnvGen.ar(
-                        Env.new(
-                            levels: [0, amp, amp, 0],
-                            times:  [0.005, max(0.001, duration - 0.105), 0.1]),
-                        gate: t_trig,
-                    );
+            env = EnvGen.ar(
+                Env.new(
+                    levels: [0, 1, 1, 0],
+                    times:  [0.005, max(0.001, duration - 0.105), 0.1]),
+                gate: t_trig,
+            );
 ```
 
-**Lines 47-56**: rate calculation + duration + envelope.
+**Lines 50-64**: rate calculation + duration + envelope.
 
 - **`rate = Lag.kr(rate, rateSlew) * BufRateScale.kr(bufnum)`** — slew the user's rate AND scale by the buffer's native rate.
 - **`frames = BufFrames.kr(bufnum)`** — total frame count of the buffer.
 - **`duration = frames * (end - start) / rate.abs / s.sampleRate * loops`** — compute the playback duration in seconds. The region length in frames is `frames * (end - start)`; divide by `rate.abs` (samples-per-frame at this rate); divide by `s.sampleRate` (frames-per-second); multiply by `loops`.
 
-- **`env`**: a 4-segment envelope: 0 → amp → amp → 0. The segments are 0.005 / `max(0.001, duration - 0.105)` / 0.1 seconds. So: a 5 ms attack, hold for `duration - 105ms`, and a 100 ms release. The `max(0.001, ...)` guards against very short durations producing a negative hold time.
+- **`env`**: a unity-level 4-segment envelope: 0 → 1 → 1 → 0. The segments are 0.005 / `max(0.001, duration - 0.105)` / 0.1 seconds. So: a 5 ms attack, hold for `duration - 105ms`, and a 100 ms release. The `max(0.001, ...)` guards against very short durations producing a negative hold time.
+
+The envelope deliberately does NOT carry `amp`. `EnvGen` reads each segment's target level only when that segment starts, so `levels: [0, amp, amp, 0]` would freeze the hold level at whatever `amp` was at trigger time: a retrigger while the fader is down holds the loop silent for the whole region, and fading back up does nothing until the next trigger, which then jumps straight to the new level. It would also apply `amp` twice (env × `ampSig`). Volume lives solely in `ampSig = amp.lag3(amp_slew)` downstream.
 
 `t_trig` gates the envelope (restart from segment 0 on each fire).
 
@@ -151,38 +156,38 @@ The effect: when you trigger the synth twice, the first trigger captures one set
 ### The Phasors
 
 ```supercollider
-                    pos = Phasor.ar(
-                        trig: aOrB,
-                        rate: rate,
-                        start: (((rate > 0) * startA) + ((rate < 0) * endA)) * frames,
-                        end:   (((rate > 0) * endA)   + ((rate < 0) * startA)) * frames,
-                        resetPos: (((rate > 0) * startA) + ((rate < 0) * endA)) * frames,
-                    );
+            pos = Phasor.ar(
+                trig: aOrB,
+                rate: rate,
+                start: (((rate > 0) * startA) + ((rate < 0) * endA)) * frames,
+                end:   (((rate > 0) * endA)   + ((rate < 0) * startA)) * frames,
+                resetPos: (((rate > 0) * startA) + ((rate < 0) * endA)) * frames,
+            );
 
-                    snd = BufRd.ar(
-                        numChannels: 2,
-                        bufnum: bufnum,
-                        phase: pos,
-                        interpolation: 4,
-                    );
+            snd = BufRd.ar(
+                numChannels: 2,
+                bufnum: bufnum,
+                phase: pos,
+                interpolation: 4,
+            );
 
-                    pos2 = Phasor.ar(
-                        trig: (1 - aOrB),
-                        rate: rate,
-                        start: (((rate > 0) * startB) + ((rate < 0) * endB)) * frames,
-                        end:   (((rate > 0) * endB)   + ((rate < 0) * startB)) * frames,
-                        resetPos: (((rate > 0) * startB) + ((rate < 0) * endB)) * frames,
-                    );
+            pos2 = Phasor.ar(
+                trig: (1 - aOrB),
+                rate: rate,
+                start: (((rate > 0) * startB) + ((rate < 0) * endB)) * frames,
+                end:   (((rate > 0) * endB)   + ((rate < 0) * startB)) * frames,
+                resetPos: (((rate > 0) * startB) + ((rate < 0) * endB)) * frames,
+            );
 
-                    snd2 = BufRd.ar(
-                        numChannels: 2,
-                        bufnum: bufnum,
-                        phase: pos2,
-                        interpolation: 4,
-                    );
+            snd2 = BufRd.ar(
+                numChannels: 2,
+                bufnum: bufnum,
+                phase: pos2,
+                interpolation: 4,
+            );
 ```
 
-**Lines 58-86**: the dual Phasors + dual BufRds.
+**Lines 66-94**: the dual Phasors + dual BufRds.
 
 The cleverness is in the start/end computation:
 
@@ -200,7 +205,7 @@ end:   (((rate > 0) * endA)   + ((rate < 0) * startA)) * frames
 This is what gives Sampler its directional flexibility — positive rate plays forward, negative plays backward, zero freezes.
 
 `BufRd.ar(numChannels, bufnum, phase, interpolation)`:
-- `numChannels: 2` — read 2 channels (stereo).
+- `numChannels: 2` — read 2 channels (stereo). **The buffer must really have 2 channels.** A buffer UGen asked for more channels than the buffer holds plays only the ones it finds, so with a mono buffer this used to come out of the left speaker only. `Lied.sc` now guarantees it: every cached buffer is 2-channel (`readStereoBuffer`, chapter 03). Stereo files load as-is, mono files are read into both channels (`Buffer.readChannel(channels: [0, 0])`, so they are dual-mono and sit centered through `Balance2`), and files with more than two channels keep their first two.
 - `phase: pos` — read at the position specified by the Phasor.
 - `interpolation: 4` — cubic interpolation (smoothest).
 
@@ -209,25 +214,23 @@ The B Phasor + BufRd is identical, but triggered by `(1 - aOrB)` and using `star
 ### Crossfade + filter + sends
 
 ```supercollider
-                    filtered = MoogFF.ar(
-                        in: (crossfade * snd) + ((1 - crossfade) * snd2) * env,
-                        freq: cutoff.lag3(cutoff_slew),
-                        gain: resonance);
+            filtered = MoogFF.ar(
+                in: (crossfade * snd) + ((1 - crossfade) * snd2) * env,
+                freq: cutoff.lag3(cutoff_slew),
+                gain: resonance);
 
-                    sig = Balance2.ar(filtered[0], filtered[1], pan.lag3(pan_slew));
+            sig = Balance2.ar(filtered[0], filtered[1], pan.lag3(pan_slew));
 
-                    ampSig = amp.lag3(amp_slew);
-                    Out.ar(dry_bus,    LeakDC.ar(sig) * ampSig * dry_send.lag3(0.05));
-                    Out.ar(reverb_bus, LeakDC.ar(sig) * ampSig * reverb_send.lag3(0.05));
-                    Out.ar(delay_bus,  LeakDC.ar(sig) * ampSig * delay_send.lag3(0.05));
-                    Out.ar(gran_bus,   LeakDC.ar(sig) * ampSig * granular_send.lag3(0.05));
-                }).add;
-            }
-        }
+            ampSig = amp.lag3(amp_slew);
+            Out.ar(dry_bus,    LeakDC.ar(sig) * ampSig * dry_send.lag3(0.05));
+            Out.ar(reverb_bus, LeakDC.ar(sig) * ampSig * reverb_send.lag3(0.05));
+            Out.ar(delay_bus,  LeakDC.ar(sig) * ampSig * delay_send.lag3(0.05));
+            Out.ar(gran_bus,   LeakDC.ar(sig) * ampSig * granular_send.lag3(0.05));
+        }).add;
     }
 ```
 
-**Lines 88-104**: crossfade + filter + balance + sends.
+**Lines 96-109**: crossfade + filter + balance + sends.
 
 The crossfade: `(crossfade * snd) + ((1 - crossfade) * snd2)`. When crossfade slews from 0 to 1, the output transitions from snd2-only to snd-only over 100 ms.
 
@@ -281,7 +284,7 @@ The crossfade: `(crossfade * snd) + ((1 - crossfade) * snd2)`. When crossfade sl
     }
 ```
 
-**Lines 106-146**: constructor + init.
+**Lines 112-152**: constructor + init.
 
 `*new` takes a `buf` arg (the audio buffer) plus the four bus indices. The constructor stores `buffer = buf` and passes `buf.bufnum` (the integer bufnum) into the globalParams dict.
 
@@ -313,7 +316,7 @@ The 8-subgroup pattern is identical to other voice classes.
     }
 ```
 
-**Lines 149-164**: trigger with start, end, rate.
+**Lines 154-170**: trigger with start, end, rate.
 
 Same `isPlaying` branch pattern as TriSin:
 
@@ -354,7 +357,7 @@ If you're tracking why combined sets matter for the A/B crossfade: the SynthDef'
     }
 ```
 
-**Lines 166-192**: standard cross-voice control methods. Identical structure to TriSin's analogous methods (chapter 05). The only difference: `trigger` takes start/end/rate args.
+**Lines 172-198**: standard cross-voice control methods. Identical structure to TriSin's analogous methods (chapter 05). The only difference: `trigger` takes start/end/rate args.
 
 ## 6. `resetVoices` and `free`
 
@@ -375,7 +378,7 @@ If you're tracking why combined sets matter for the A/B crossfade: the SynthDef'
 }
 ```
 
-**Lines 199-211**: panic recovery + cleanup.
+**Lines 200-217**: panic recovery + cleanup.
 
 `resetVoices`: for each voice key, free the existing subgroup (and any synth inside) and create a fresh empty subgroup. Used by `Lied.silenceAllSamplers` for K1 panic recovery — destroys + recreates the subgroups, keeping the instance alive.
 
@@ -390,7 +393,7 @@ After this, every voice key has an empty subgroup. The next trigger on any voice
 ## Checkpoint
 
 ```supercollider
-~b = Buffer.read(s, "/path/to/your/file.wav");
+~b = Buffer.readChannel(s, "/path/to/your/file.wav", channels: [0, 0]); // 2-channel, like Lied's readStereoBuffer (for a mono file)
 // (Wait for the buffer load)
 ~lied.loadSampler... // covered in chapter 03; for sclang-only testing you'd construct Sampler.new(~b, ...) directly
 ~lied.triggerSampler(1, 1, 0, 1, 1);    // play full buffer at rate 1
@@ -403,7 +406,7 @@ You should hear clickless segment changes, with an audible 100 ms crossfade betw
 
 ## Summary
 
-`Sampler.sc` is 212 lines. The patterns to internalize:
+`Sampler.sc` is 218 lines. The patterns to internalize:
 
 - **A/B Phasor + Latch + Lag crossfade**: smooth retriggers between different start/end regions.
 - **Signed rate via "boolean as signal"**: `(rate > 0) * start + (rate < 0) * end` selects forward or reverse direction.

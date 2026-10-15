@@ -337,9 +337,9 @@ The reason relative timing is right for user_seq/random: each picked rate is the
 
 ```lua
 -- Start one clock loop per toggle cell (rows 2, 4, 6, 8 × 16 cols = 64 loops).
--- Note: row 8 cols 14-16 are NOT sequencer triggers (they're mic/granular
--- on/off toggles); their clock loops still run but their roles do nothing
--- on tick. See cell_roles.lua's row-8 cols 14-16 handling.
+-- Note: row 8 cols 13-16 are NOT sequencer triggers (they're the granular
+-- freeze / mic / granular-out / mic-monitor toggles); their clock loops still
+-- run but do nothing on tick. See cell_roles.lua's row-8 handling.
 function Sequencer.start_all_clocks()
     for x = 1, 16 do
         for y = 2, 8, 2 do  -- rows 2, 4, 6, 8
@@ -367,7 +367,7 @@ end
 
 `stop_all_clocks` is called from `cleanup`. It iterates the same cells and cancels each running coroutine.
 
-The note about row 8 cols 14-16 is important: those cells (mic toggle, granular out, mic dry) are NOT sequencer-driven. Their clock loops still run, but their role dispatch is a no-op (see cell_roles.dispatch's row-8 branch). The simpler alternative would be to not start clocks for those cells; the script chose to start them anyway for uniformity (every toggle cell has a clock; the role decides whether to do anything).
+The note about row 8 cols 13-16 is important: those cells (granular freeze, mic to delay, granular out, and the mic monitor shortcut) are NOT sequencer-driven. Their clock loops still run, but their role dispatch is a no-op (see cell_roles.dispatch's row-8 branch). The simpler alternative would be to not start clocks for those cells; the script chose to start them anyway for uniformity (every toggle cell has a clock; the role decides whether to do anything).
 
 ## Clock-quantized pause and resume
 

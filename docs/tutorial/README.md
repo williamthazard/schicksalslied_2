@@ -38,6 +38,8 @@ If you want the full paint-by-numbers experience, read 01 through 20 in order, t
 | 19 | [schicksalslied.lua](19-schicksalslied.lua.md) | `schicksalslied.lua` | Top-level script: init, params, grid, screen, panic, cleanup |
 | 20 | [Deployment and Debugging](20-deployment-debugging.md) | (none) | Deploy flow, common failure modes, the TICK probe, what to check first |
 
+(`lib/Sine.sc`, the default row-2 voice, has no chapter of its own: it has the same structure as TriSin, which chapter 05 walks through.)
+
 ## Reading paths
 
 **Linear (recommended for first read):**

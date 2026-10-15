@@ -64,13 +64,14 @@ function MidiInput.set_role(role_idx)
 end
 
 -- Push all per-voice params from the midi_input_* params to the freshly
--- allocated SC instance.
+-- allocated SC instance. :bang() fires each action with its current value
+-- (params:set to the same value is a no-op in norns, so it never sent).
 function MidiInput._reapply_voice_params()
     local shared = { 'amp', 'amp_slew', 'pan', 'pan_slew',
                      'dry_send', 'reverb_send', 'delay_send', 'granular_send' }
     for _, k in ipairs(shared) do
         local pid = 'midi_input_' .. k
-        if params.lookup[pid] then params:set(pid, params:get(pid)) end
+        if params.lookup[pid] then params:lookup_param(pid):bang() end
     end
     if MidiInput.role == 'TriSin' then
         local trisin_only = {
@@ -81,11 +82,11 @@ function MidiInput._reapply_voice_params()
         }
         for _, k in ipairs(trisin_only) do
             local pid = 'midi_input_' .. k
-            if params.lookup[pid] then params:set(pid, params:get(pid)) end
+            if params.lookup[pid] then params:lookup_param(pid):bang() end
         end
     elseif MidiInput.role == 'Ringer' then
         local pid = 'midi_input_decay'
-        if params.lookup[pid] then params:set(pid, params:get(pid)) end
+        if params.lookup[pid] then params:lookup_param(pid):bang() end
     end
 end
 

@@ -26,13 +26,13 @@ copy this folder to `/home/we/dust/code/schicksalslied/` on your norns.
 
 ```
 1 ─ history: 128 typed/loaded lines
-2 ─ voice cells × 16 (TriSin, Ringer, crow, JF, w/, MIDI, ...)
+2 ─ voice cells × 16 (Sine, TriSin, Ringer, crow, JF, w/, MIDI, ...)
 3 ─ assign row for row 2
 4 ─ looping samplers 1–8 (odd cols = trigger, even = rate)
 5 ─ assign row for row 4
 6 ─ looping samplers 9–16 (odd cols = trigger, even = rate)
 7 ─ assign row for row 6
-8 ─ one-shots 1–13 + mic→delay / granular out / mic dry (cols 14/15/16)
+8 ─ one-shots 1–12 (cols 1–12), granular freeze (13), mic→delay (14), granular out (15), mic monitor (16)
 ```
 
 rows 2/4/6/8 are toggles — press to start/stop. rows 3/5/7 are momentary — press to assign the staged line to the cell above.
@@ -47,8 +47,9 @@ K3: ENTER (stage + add to history)  E3: BPM
 
 ## voice roles
 
-each of the 16 row-2 cells can be assigned one of 11 roles via PARAMETERS → synths → cell N → role.
+each of the 16 row-2 cells can be assigned one of 12 roles via PARAMETERS → synths → cell N → role.
 
+- **Sine** — plain sine voice (the default)
 - **TriSin** — FM voice (triangle carrier, sine modulator)
 - **Ringer** — pinged resonant filter, percussive
 - **crow 1+2** / **crow 3+4** — pitch CV + AR env on a pair of crow outputs
@@ -58,19 +59,40 @@ each of the 16 row-2 cells can be assigned one of 11 roles via PARAMETERS → sy
 - **w/tape looper** — w/tape loop choreography
 - **MIDI** — note on/off to the configured device + channel
 
-defaults alternate blocks of 4: TriSin × 4, Ringer × 4, TriSin × 4, Ringer × 4.
+all 16 cells default to Sine. each cell also has a **hz offset** (±100 Hz, applied directly to the frequency) next to pitch offset — handy for slow beating between cells tuned to the same note.
 
 ## samplers and one-shots
 
-load files via PARAMETERS → looping samplers → sampler N → file (10-minute max per file). identical files loaded into multiple slots share one buffer.
+load files via PARAMETERS → looping samplers → sampler N → file (10-minute max per file; a longer file is rejected and the slot goes silent, with a warning in maiden). identical files loaded into multiple slots share one buffer. mono files play centered in both speakers; stereo files keep their stereo image (one-shots and looping samplers alike).
 
-sampler **trigger cells** (odd cols on rows 4/6) emit start + end positions per fire. **rate cells** (even cols, paired with the trigger to their left) set playback rate independently — negative for reverse, 0 for freeze. one-shots (row 8 cols 1-13) play the whole buffer per trigger.
+sampler **trigger cells** (odd cols on rows 4/6) emit start + end positions per fire. **rate cells** (even cols, paired with the trigger to their left) set playback rate independently — negative for reverse, 0 for freeze.
+
+one-shots (row 8 cols 1–12) can load either an **individual file** or a **folder of samples** (e.g. a kit of drum hits). `source` is the first setting of each one-shot slot; set it to `file` or `folder`:
+- **folder**: pick any file inside the folder you want and the whole folder loads (sorted by name; up to 128 files / 10 minutes of audio in total — extras are skipped). picking another file in the same folder doesn't reload it; to pick up files you added, switch `source` to `file` and back.
+- **`sample select`**: sequence through the folder (`seq`), pick randomly on every hit (`random`), or choose from the cell's text (`lied`).
+- **`accent mode`**: `off`, `pattern` (accent steps of an up-to-8-step groove, to keep a consistent rhythm even when firing random drum samples), or `lied` (uppercase letters in the text accent the hit).
+
+every one-shot hit reads 3 characters of its cell's text (rate, sample, accent) whatever the modes, so switching `lied` accents or sample select never changes the rhythm.
 
 ## granular delay
 
-row 8 col 14 toggles mic into the delay buffer. col 15 toggles granular output. col 16 toggles a dry mic passthrough.
+row 8 col 13 toggles granular freeze (not saved in PSETs). col 14 toggles mic into the delay buffer. col 15 toggles granular output.
 
 any voice can route into the granular chain via its `granular send` param. turn up `feedback amp` (PARAMETERS → granular delay → feedback patch) to make the chain self-modulating.
+
+PARAMETERS → granular delay → granular engine:
+- **granular freeze** — stop writing new audio; the grains keep playing what's in the buffer.
+- **buffer preservation** — how much of the old buffer is kept as new audio is recorded (0 = overwrite, 1 = keep; the recirculated signal is soft-clipped so it can't grow without bound).
+- **grain window** — grain envelope: hann, percussive, swell, reverse swell.
+- **grain sync distribution** — 0 to 1, how grain triggers are timed: 1 = regular, synchronized pulses, 0 = random (dust-like) scatter, in between mixes the two.
+- **grain cutoff ceiling** — upper limit (200–16000 Hz) for the per-grain filter cutoffs.
+- **grain rate mult** — global multiplier (0.25–4x) on every grain's playback rate.
+- **grain octaves / fifths & 4ths / sub-octaves** — switch the grains' playback rates to sets that include those intervals (octave up, fifth/fourth, one or two octaves down).
+- **grain reverse** — every other grain plays backwards.
+
+## mic monitor (row 8 col 16)
+
+col 16 is a shortcut to the norns LEVELS `monitor_level` (the hardware input monitor), so it isn't part of the feedback patch. the LED is lit when the monitor is audible. pressing it when lit mutes the monitor and remembers the level; pressing it when dark unmutes to the level it had when you muted it (or -12 dB if there's none remembered). panic mutes it too. leaving the script does not touch the level — like any LEVELS change, it stays where you left it.
 
 ## sequencer modes
 
@@ -94,6 +116,16 @@ PARAMETERS → midi input: pick device + role (TriSin or Ringer) for a dedicated
 ## PSET
 
 standard norns PSET via PARAMETERS → PSET. history and per-cell string assignments save to a sidecar `.lieddata` file alongside the .pset; PSET 01 autoloads on script start.
+
+## upgrading from 2.0
+
+- **Ringer and looping sampler `amp` is now linear** — values below 1 are louder than before (e.g. amp 0.5 is about +6 dB), so turn down old presets if they got hot.
+- **Sine was added first in the role list**, so role indices shifted by one: row-2 roles in presets saved with 2.0 load one role off (re-pick the roles you want).
+- **sampler slice duration** now spans 0.001–1.0 of the file (it used to top out near 0.1), so slices can be much longer.
+- one-shot slot 13 is gone (12 slots); granular freeze moved to col 13 and the old mic dry control is replaced by the LEVELS monitor shortcut.
+- **one-shots play stereo files in stereo** (they used to play only the file's left channel); mono files sound the same as before.
+- **looping samplers now play mono files centered in both speakers** (they used to come out of the left speaker only).
+- one-shot cells now read 3 characters of text per hit (it used to be 1), so a given line drives a different one-shot rhythm than in 2.0.
 
 ## tips
 

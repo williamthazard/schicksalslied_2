@@ -140,7 +140,7 @@ end
 
 -- ────────────────────────────────────────────────────────────────────────
 -- ONE-SHOT PARAM BLOCK (called from schicksalslied.lua's add_params for
--- slots 1..13). Adds 9 params per one-shot (file param added separately).
+-- slots 1..12). Adds 13 params per one-shot (file param added separately).
 -- ────────────────────────────────────────────────────────────────────────
 function VoiceParams.add_oneshot_block(slot)
     params:add{
@@ -239,6 +239,243 @@ function VoiceParams.add_oneshot_block(slot)
     }
 end
 
+-- 'source' is the slot's FIRST param (before the file param), so it keeps
+-- its menu position when switching hides 'file' / shows 'folder' — with it
+-- second, switching to folder moved it up a row and left the cursor on
+-- 'folder'. Being first also means PSET recall applies it before the file
+-- and folder values, so only the selected side ever loads.
+function VoiceParams.add_oneshot_source_param(slot)
+    params:add{
+        type = 'option',
+        id = 'oneshot_' .. slot .. '_source',
+        name = 'one-shot ' .. slot .. ' source',
+        options = { 'file', 'folder' },
+        default = 1,
+        action = function(idx)
+            VoiceParams._update_oneshot_visibility(slot)
+            VoiceParams.load_selected_oneshot(slot)
+        end,
+    }
+end
+
+-- Added after the slot's file param (see schicksalslied.lua).
+function VoiceParams.add_oneshot_folder_and_accent_params(slot)
+    local p = 'oneshot_' .. slot .. '_'
+
+    -- Pick any file inside the folder you want; the whole folder loads.
+    -- Starts at '-' like the other file params: a norns file param's `path`
+    -- is its initial VALUE (not the browser's start dir), so setting it
+    -- made params:bang() load that folder into every slot at boot.
+    params:add{
+        type = 'file',
+        id = p .. 'folder',
+        name = 'one-shot ' .. slot .. ' folder',
+        action = function(_)
+            if params:get(p .. 'source') == 2 then
+                VoiceParams.load_selected_oneshot(slot)
+            end
+        end,
+    }
+
+    params:add{
+        type = 'option',
+        id = p .. 'sample_select',
+        name = 'one-shot ' .. slot .. ' sample select',
+        options = { 'seq', 'random', 'lied' },
+        default = 1,
+    }
+
+    params:add{
+        type = 'option',
+        id = p .. 'accent_mode',
+        name = 'one-shot ' .. slot .. ' accent mode',
+        options = { 'off', 'pattern', 'lied' },
+        default = 1,
+        action = function(idx)
+            VoiceParams._update_oneshot_visibility(slot)
+        end,
+    }
+
+    params:add{
+        type = 'number',
+        id = p .. 'accent_length',
+        name = 'one-shot ' .. slot .. ' accent length',
+        min = 1,
+        max = 8,
+        default = 4,
+        action = function(n)
+            VoiceParams._update_oneshot_visibility(slot)
+        end,
+    }
+
+    for s = 1, 8 do
+        params:add{
+            type = 'option',
+            id = p .. 'accent_step_' .. s,
+            name = 'one-shot ' .. slot .. ' step ' .. s .. ' accent',
+            options = { 'off', 'on' },
+            default = (s == 1) and 2 or 1,
+        }
+    end
+
+    params:add{
+        type = 'control',
+        id = p .. 'accent_boost',
+        name = 'one-shot ' .. slot .. ' accent boost',
+        controlspec = controlspec.new(1.0, 3.0, 'lin', 0.05, 1.6, 'x'),
+    }
+
+    params:add{
+        type = 'control',
+        id = p .. 'accent_unaccent',
+        name = 'one-shot ' .. slot .. ' unaccent level',
+        controlspec = controlspec.new(0.1, 1.0, 'lin', 0.05, 0.7, 'x'),
+    }
+end
+
+-- ── One-shot loading ──
+-- Each slot has a file param and a folder param; 'source' picks which one
+-- reaches the engine (the other keeps its value for switching back).
+-- Roles.oneshot_sources[slot] records what SC holds, on the canonical Roles
+-- table the dispatcher reads.
+
+-- Load whichever of the slot's file / folder params 'source' selects.
+-- The file side bangs the file param: its action (schicksalslied.lua)
+-- owns the duration guard.
+function VoiceParams.load_selected_oneshot(slot)
+    local p = 'oneshot_' .. slot .. '_'
+    if params:get(p .. 'source') == 2 then
+        local picked = params:get(p .. 'folder')
+        local dir = picked and picked ~= '-' and picked:match('(.*/)') or nil
+        VoiceParams.load_oneshot_folder(slot, dir)
+    else
+        params:lookup_param(p .. 'file'):bang()
+    end
+end
+
+-- Record that `key` (a file path or folder dir) is now loading into slot.
+-- Returns false if it's already what the slot holds, so repeat bangs
+-- (params:bang, PSET recall, source switches) don't reload it.
+function VoiceParams.claim_oneshot_source(slot, kind, key, count)
+    local R = _G.GlobalRoles or Roles
+    local cur = R.oneshot_sources[slot]
+    if cur and cur.kind == kind and cur.key == key then return false end
+    R.oneshot_sources[slot] = { kind = kind, key = key, count = count }
+    return true
+end
+
+function VoiceParams.clear_oneshot(slot)
+    local R = _G.GlobalRoles or Roles
+    -- Every load claims the slot first, so no claim means SC holds nothing
+    -- (and has nothing in flight): skip the redundant clear at boot/bang.
+    if R.oneshot_sources[slot] == nil then return end
+    R.oneshot_sources[slot] = nil
+    engine.oneshot_clear(slot)
+end
+
+local AUDIO_EXTS = { wav = true, aif = true, aiff = true, flac = true }
+local FOLDER_MAX_FILES = 128
+-- A whole folder holds no more audio than one max-length sample (the
+-- 600 s per-file cap in schicksalslied.lua's duration guard), so a folder
+-- can't use more RAM than a single file could.
+local FOLDER_MAX_SEC = 600
+-- The path list travels as one OSC string; keep it well inside a packet.
+local FOLDER_MAX_LIST_BYTES = 16000
+
+-- Lua is the source of truth for a folder's contents: it scans, sorts and
+-- filters here and sends SC the exact list, so the sample count and order
+-- the dispatcher indexes match what SC loaded.
+function VoiceParams.load_oneshot_folder(slot, dir)
+    if dir == nil or dir == '' then
+        VoiceParams.clear_oneshot(slot)
+        return
+    end
+    local R = _G.GlobalRoles or Roles
+    local cur = R.oneshot_sources[slot]
+    -- E3 on the folder param steps through files in the same folder; each
+    -- step fires the action, but the folder is already loaded.
+    if cur and cur.kind == 'folder' and cur.key == dir then return end
+
+    local names = {}
+    for _, fname in ipairs(util.scandir(dir) or {}) do
+        local ext = fname:match('%.([^./]+)$')  -- subdirs end in '/', so no match
+        -- Names with line breaks would split in the newline-joined list.
+        if ext and AUDIO_EXTS[ext:lower()] and not fname:find('[\n\r]') then
+            table.insert(names, fname)
+        end
+    end
+    table.sort(names)
+
+    local files, total_sec, list_bytes = {}, 0, 0
+    for _, fname in ipairs(names) do
+        local path = dir .. fname
+        local ch, samples, sr = audio.file_info(path)
+        local sec = (ch and samples and sr and sr > 0) and (samples / sr) or nil
+        if sec == nil then
+            print(string.format('OneShot %d: skipping unreadable %s', slot, fname))
+        elseif total_sec + sec > FOLDER_MAX_SEC then
+            print(string.format('OneShot %d: skipping %s (folder budget is %ds of audio)',
+                slot, fname, FOLDER_MAX_SEC))
+        elseif #files >= FOLDER_MAX_FILES or list_bytes + #path + 1 > FOLDER_MAX_LIST_BYTES then
+            print(string.format('OneShot %d: folder limit reached after %d files', slot, #files))
+            break
+        else
+            table.insert(files, path)
+            total_sec = total_sec + sec
+            list_bytes = list_bytes + #path + 1
+        end
+    end
+
+    if #files == 0 then
+        print(string.format('OneShot %d: no loadable audio files in %s', slot, dir))
+        VoiceParams.clear_oneshot(slot)
+        return
+    end
+
+    VoiceParams.claim_oneshot_source(slot, 'folder', dir, #files)
+    engine.oneshot_load_files(slot, table.concat(files, '\n'))
+    VoiceParams.reapply_oneshot(slot)
+    print(string.format('OneShot %d loading folder: %s (%d samples, %.1fs)',
+        slot, dir, #files, total_sec))
+end
+
+function VoiceParams._update_oneshot_visibility(slot)
+    local p = 'oneshot_' .. slot .. '_'
+    local source = params.lookup[p .. 'source'] and params:get(p .. 'source') or 1
+    if source == 1 then
+        params:show(p .. 'file')
+        params:hide(p .. 'folder')
+        params:hide(p .. 'sample_select')
+    else
+        params:hide(p .. 'file')
+        params:show(p .. 'folder')
+        params:show(p .. 'sample_select')
+    end
+
+    local acc_mode = params.lookup[p .. 'accent_mode'] and params:get(p .. 'accent_mode') or 1
+    if acc_mode == 1 then
+        params:hide(p .. 'accent_length')
+        for s = 1, 8 do params:hide(p .. 'accent_step_' .. s) end
+        params:hide(p .. 'accent_boost')
+        params:hide(p .. 'accent_unaccent')
+    elseif acc_mode == 2 then
+        params:show(p .. 'accent_length')
+        local len = params.lookup[p .. 'accent_length'] and params:get(p .. 'accent_length') or 4
+        for s = 1, 8 do
+            if s <= len then params:show(p .. 'accent_step_' .. s) else params:hide(p .. 'accent_step_' .. s) end
+        end
+        params:show(p .. 'accent_boost')
+        params:show(p .. 'accent_unaccent')
+    elseif acc_mode == 3 then
+        params:hide(p .. 'accent_length')
+        for s = 1, 8 do params:hide(p .. 'accent_step_' .. s) end
+        params:show(p .. 'accent_boost')
+        params:show(p .. 'accent_unaccent')
+    end
+
+    _menu.rebuild_params()
+end
+
 function VoiceParams.randomize_oneshot(slot)
     params:set('oneshot_' .. slot .. '_amp',       math.random(20, 80) / 100)
     params:set('oneshot_' .. slot .. '_cutoff',    math.random(500, 12000))
@@ -257,9 +494,9 @@ end
 -- ────────────────────────────────────────────────────────────────────────
 
 -- Map a role index (from cell_role param) to its display string.
--- Mirrors Roles.ENUM ordering — must stay in sync (11 entries with MIDI).
+-- Mirrors Roles.ENUM ordering — must stay in sync (12 entries with Sine, TriSin, Ringer, etc.).
 local ROLE_NAMES = {
-    'TriSin', 'Ringer', 'crow 1+2', 'crow 3+4',
+    'Sine', 'TriSin', 'Ringer', 'crow 1+2', 'crow 3+4',
     'JF', 'JF run', 'JF quantize',
     'w/syn', 'w/del', 'w/tape looper', 'MIDI',
 }
@@ -281,6 +518,7 @@ function VoiceParams.add_row2_cell_block(x)
             -- voice_params.lua's local `Roles` is a different table per include;
             -- writes here wouldn't reach the dispatcher otherwise.
             local R = _G.GlobalRoles or Roles
+            local prev_role = R.cell_role[x]
             R.cell_role[x] = role
             local prev_alloc = R.allocated[cell_id]
             if prev_alloc and prev_alloc ~= role then
@@ -288,10 +526,15 @@ function VoiceParams.add_row2_cell_block(x)
                     engine.trisin_free(cell_id)
                 elseif prev_alloc == 'Ringer' then
                     engine.ringer_free(cell_id)
+                elseif prev_alloc == 'Sine' then
+                    engine.sine_free(cell_id)
                 end
                 R.allocated[cell_id] = nil
             end
             VoiceParams._update_row2_visibility(x, role)
+            -- The new role's SC voice starts at SynthDef defaults; push this
+            -- cell's current values (SC caches them until the voice allocates).
+            if role ~= prev_role then VoiceParams.reapply_row2_cell(x) end
         end,
     }
 
@@ -401,6 +644,15 @@ function VoiceParams.add_row2_cell_block(x)
             end
             return string.format('%+d st%s', v, suffix)
         end,
+    }
+
+    -- ── Hz offset (fine detuning / beating, applied directly to Hz) ──
+    params:add{
+        type = 'control',
+        id = 'cell_' .. x .. '_2_hz_offset',
+        name = 'cell ' .. x .. ' hz offset',
+        controlspec = cs.new(-100, 100, 'lin', 0.01, 0, 'Hz'),
+        action = function(v) VoiceParams._set_cell_param(x, 'hz_offset', v) end,
     }
 
     -- ── TriSin-only params (16) ──
@@ -548,11 +800,11 @@ end
 
 -- Default role per column (mirrors lib/cell_roles.lua ROW_2_DEFAULTS)
 function VoiceParams._default_role_index(x)
-    local role_name = Roles.ROW_2_DEFAULTS[x] or 'TriSin'
+    local role_name = Roles.ROW_2_DEFAULTS[x] or 'Sine'
     for i, name in ipairs(ROLE_NAMES) do
         if name == role_name then return i end
     end
-    return 1  -- TriSin
+    return 1  -- Sine
 end
 
 -- Dispatch a shared cell param (amp, pan, etc.) to the currently-active role's
@@ -564,6 +816,8 @@ function VoiceParams._set_cell_param(x, param_key, val)
         engine.trisin_set_param(cell_id, param_key, val)
     elseif role == 'Ringer' then
         engine.ringer_set_param(cell_id, param_key, val)
+    elseif role == 'Sine' then
+        engine.sine_set_param(cell_id, param_key, val)
     end
 end
 
@@ -572,6 +826,8 @@ function VoiceParams._set_trisin_only(x, param_key, val)
     local role = ROLE_NAMES[params:get('cell_' .. x .. '_2_role')]
     if role == 'TriSin' then
         engine.trisin_set_param(cell_id, param_key, val)
+    elseif role == 'Sine' then
+        engine.sine_set_param(cell_id, param_key, val)
     end
 end
 
@@ -587,14 +843,16 @@ end
 function VoiceParams._update_row2_visibility(x, role)
     local trisin_only = {
         'fm_carrier_ratio', 'fm_modulator_ratio', 'fm_index', 'fm_iscale',
-        'attack', 'release', 'attack_curve', 'release_curve',
         'fm_env_attack', 'fm_env_release', 'fm_env_attack_curve', 'fm_env_release_curve',
-        'cutoff', 'cutoff_env', 'resonance', 'freq_slew',
+        'cutoff', 'cutoff_env', 'resonance',
+    }
+    local envelope_and_slew = {
+        'attack', 'release', 'attack_curve', 'release_curve', 'freq_slew',
     }
     local ringer_only = { 'decay' }
     local midi_only = { 'midi_channel' }
     local shared = { 'amp', 'amp_slew', 'pan', 'pan_slew', 'polyphony',
-                     'dry_send', 'reverb_send', 'delay_send', 'granular_send' }
+                     'dry_send', 'reverb_send', 'delay_send', 'granular_send', 'hz_offset' }
 
     local prefix = 'cell_' .. x .. '_2_'
     local function show_or_hide(list, show)
@@ -611,7 +869,9 @@ function VoiceParams._update_row2_visibility(x, role)
     -- for crow/JF/w/* roles since amp/pan/poly/bus don't apply to them.
     -- MIDI uses shared amp? No — MIDI has fixed velocity from sequins. So
     -- only show shared for TriSin or Ringer.
-    show_or_hide(shared, role == 'TriSin' or role == 'Ringer')
+    -- Shared params apply to all SC voices (TriSin / Ringer / Sine)
+    show_or_hide(shared, role == 'TriSin' or role == 'Ringer' or role == 'Sine')
+    show_or_hide(envelope_and_slew, role == 'TriSin' or role == 'Sine')
     show_or_hide(trisin_only, role == 'TriSin')
     show_or_hide(ringer_only, role == 'Ringer')
     show_or_hide(midi_only, role == 'MIDI')
@@ -639,9 +899,11 @@ function VoiceParams.randomize_row2_cell(x)
         params:set(prefix .. 'resonance', math.random(50, 350) / 100)
     elseif role == 'Ringer' then
         params:set(prefix .. 'decay', math.random(50, 1500) / 100)
+    elseif role == 'Sine' then
+        params:set(prefix .. 'attack', math.random(1, 100) / 100)
+        params:set(prefix .. 'release', math.random(10, 200) / 100)
     end
 end
-
 -- ────────────────────────────────────────────────────────────────────────
 -- SEQ_MODE param block per cell (4-option mode + sub-params per mode)
 -- ────────────────────────────────────────────────────────────────────────
@@ -871,21 +1133,37 @@ end
 -- without this, the Lua-side user values would silently diverge from SC.
 -- The engine.set_param calls land in SC's pending-params cache (the instance
 -- is still being allocated in a fork) and are applied when alloc completes.
+-- Uses :bang() — params:set(id, params:get(id)) is a no-op in norns when
+-- the value is unchanged, so it never actually reached SC.
 local SC_BOUND_KEYS = {
     'amp', 'amp_slew', 'cutoff', 'resonance', 'pan', 'pan_slew',
     'dry_send', 'reverb_send', 'delay_send', 'granular_send',
 }
-function VoiceParams.reapply_sampler(slot)
-    for _, key in ipairs(SC_BOUND_KEYS) do
-        local pid = 'sampler_' .. slot .. '_' .. key
-        if params.lookup[pid] then params:set(pid, params:get(pid)) end
+local function rebang(prefix, keys)
+    for _, key in ipairs(keys) do
+        local pid = prefix .. key
+        if params.lookup[pid] then params:lookup_param(pid):bang() end
     end
 end
+function VoiceParams.reapply_sampler(slot)
+    rebang('sampler_' .. slot .. '_', SC_BOUND_KEYS)
+end
 function VoiceParams.reapply_oneshot(slot)
-    for _, key in ipairs(SC_BOUND_KEYS) do
-        local pid = 'oneshot_' .. slot .. '_' .. key
-        if params.lookup[pid] then params:set(pid, params:get(pid)) end
-    end
+    rebang('oneshot_' .. slot .. '_', SC_BOUND_KEYS)
+end
+
+-- Every row-2 param whose action forwards to SC. Each action routes by the
+-- cell's current role, so banging them all only reaches the active voice.
+local ROW2_SC_KEYS = {
+    'amp', 'amp_slew', 'pan', 'pan_slew', 'dry_send', 'reverb_send',
+    'delay_send', 'granular_send', 'hz_offset',
+    'fm_carrier_ratio', 'fm_modulator_ratio', 'fm_index', 'fm_iscale',
+    'attack', 'release', 'attack_curve', 'release_curve',
+    'fm_env_attack', 'fm_env_release', 'fm_env_attack_curve', 'fm_env_release_curve',
+    'cutoff', 'cutoff_env', 'resonance', 'freq_slew', 'decay',
+}
+function VoiceParams.reapply_row2_cell(x)
+    rebang('cell_' .. x .. '_2_', ROW2_SC_KEYS)
 end
 
 -- ────────────────────────────────────────────────────────────────────────
@@ -974,7 +1252,7 @@ local STRING_CELLS = (function()
     for y = 4, 6, 2 do
         for x = 1, 16 do t[#t + 1] = { x, y } end              -- rows 4 & 6: all 16
     end
-    for x = 1, 13 do t[#t + 1] = { x, 8 } end                  -- row 8 cols 1-13
+    for x = 1, 12 do t[#t + 1] = { x, 8 } end                  -- row 8 cols 1-12
     return t
 end)()
 

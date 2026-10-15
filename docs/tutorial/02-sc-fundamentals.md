@@ -366,18 +366,19 @@ fork {
 
 ```supercollider
 loadSampler { arg slot, filePath;
-    fork {
-        var sf, duration, buf, pending;
-        // ... open file, check duration ...
-        buf = Buffer.read(server, filePath);
-        server.sync;
-        // ... now safe to construct Sampler with this buffer ...
-        samplerInstances[slot] = Sampler.new(buf, ...);
+    // Bump first: even a refused load cancels older loads still in flight
+    var gen = this.bumpGen(samplerLoadGen, slot);
+    if (this.sampleFileOk("Sampler", slot, filePath)) {
+        fork {
+            // acquireBuffer reads the file (Buffer.read ... server.sync) or reuses the cached one
+            var buf = this.acquireBuffer(filePath);
+            // ... if a newer load arrived, release; otherwise installSampler(slot, buf, filePath) ...
+        };
     };
 }
 ```
 
-The `fork` is required because `server.sync` only works inside a Routine (it needs `yield`-style suspension). Outside of `fork`, you'd block sclang itself, which would deadlock the OSC dispatch loop.
+The `fork` is required because `server.sync` (called inside `acquireBuffer`, via `readStereoBuffer`) only works inside a Routine (it needs `yield`-style suspension). Outside of `fork`, you'd block sclang itself, which would deadlock the OSC dispatch loop.
 
 `★ Insight ─────────────────────────────────────`
 **`fork` is shorthand for `Routine { ... }.play;`** It returns the Routine, which you can store and cancel later if needed: `r = fork { ... }; r.stop;`. The implicit `.play` schedules the routine on the default TempoClock; it starts running immediately.

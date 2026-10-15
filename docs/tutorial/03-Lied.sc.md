@@ -1,8 +1,8 @@
 # Chapter 03 — `lib/Lied.sc`
 
-The SC kernel that owns all DSP for schicksalslied 2.0. **925 source lines** — the largest SC file in the project, and the most architecturally dense.
+The SC kernel that owns all DSP for schicksalslied 2.0. **about 1,180 source lines** — the largest SC file in the project, and the most architecturally dense. (The `Lines N-M` annotations below were written against an earlier, shorter revision and are approximate; search for the quoted code in `lib/Lied.sc` rather than jumping to the line number.)
 
-If you've worked through chapters 01-02 you have everything you need to start. We'll build this file top-to-bottom: class skeleton, then the four-bus + three-group audio architecture, then the master FX SynthDefs, then the granular chain (lazily allocated when first needed), then voice instance management for the four voice classes. By the end of the chapter your class compiles, instantiates, and routes audio cleanly — but it won't yet be reachable from Norns (that's the next chapter's job).
+If you've worked through chapters 01-02 you have everything you need to start. We'll build this file top-to-bottom: class skeleton, then the four-bus + three-group audio architecture, then the master FX SynthDefs, then the granular chain (lazily allocated when first needed), then voice instance management for the five voice classes (Sine, TriSin, Ringer, Sampler, OneShot). By the end of the chapter your class compiles, instantiates, and routes audio cleanly — but it won't yet be reachable from Norns (that's the next chapter's job).
 
 Open a fresh `lib/Lied.sc` in your editor, and keep SC IDE open with the post window visible. After each major section you can recompile the class library (`Cmd-Shift-L` on Mac, `Ctrl-Shift-L` elsewhere) and try the code interactively. No Norns needed for this chapter.
 
@@ -55,24 +55,28 @@ A header comment naming the file's purpose. The class declaration opens with `Li
 ```supercollider
     var <triSinInstances;           // Dictionary: cell_id (Symbol) → TriSin instance
     var <ringerInstances;           // Dictionary: cell_id (Symbol) → Ringer instance
+    var <sineInstances;             // Dictionary: cell_id (Symbol) → Sine instance
     var <samplerInstances;          // Dictionary: slot (Integer)  → Sampler instance
     var <oneShotInstances;          // Dictionary: slot (Integer)  → OneShot instance
 ```
 
-**Lines 11-14**: the four voice-instance dictionaries. TriSin and Ringer are keyed by cell IDs (`'1_2'`, `'5_2'`, etc.). Sampler and OneShot are keyed by integer slot numbers. The asymmetry reflects the conceptual model: row 2 voices belong to grid cells; samplers and one-shots belong to numbered slots.
+**Lines 11-15**: the five voice-instance dictionaries. Sine, TriSin and Ringer are keyed by cell IDs (`'1_2'`, `'5_2'`, etc.). Sampler and OneShot are keyed by integer slot numbers. The asymmetry reflects the conceptual model: row 2 voices belong to grid cells; samplers and one-shots belong to numbered slots.
 
 ```supercollider
-    var <bufferCache;               // Dictionary: filePath (String) → Buffer
+    var <bufferCache;               // Dictionary: filePath (String) → 2-channel Buffer
     var <bufferRefCounts;           // Dictionary: filePath → Integer (# slots using it)
     var <samplerPaths;              // Dictionary: slot (Integer) → filePath (for refcount maintenance)
-    var <oneShotPaths;              // Dictionary: slot → filePath
+    var <oneShotPaths;              // Dictionary: slot → Array of filePaths
+    var <oneShotLoadGen;            // Dictionary: slot → Integer, bumped by every load/clear
+    var <samplerLoadGen;            // same, for looping sampler slots
 ```
 
-**Lines 15-18**: buffer dedup state. `bufferCache` maps a file path to its loaded Buffer (or to the `\loading` sentinel during a load-in-progress). `bufferRefCounts` tracks how many sampler/one-shot slots reference each cached buffer. `samplerPaths` / `oneShotPaths` reverse-map each slot to the path it currently uses, so `clearSampler(N)` knows which path's refcount to decrement.
+**Lines 16-21**: buffer dedup state. `bufferCache` maps a file path to its loaded 2-channel Buffer (or to the `\loading` sentinel during a load-in-progress). `bufferRefCounts` tracks how many sampler/one-shot slots reference each cached buffer. `samplerPaths` / `oneShotPaths` reverse-map each slot to the path(s) it currently uses, so clearing a slot knows which refcounts to decrement. `samplerPaths[slot]` is a single String; **`oneShotPaths[slot]` is always an Array** of path Strings (a single file is a one-element Array, a folder is one entry per file). `samplerLoadGen[slot]` and `oneShotLoadGen[slot]` are per-slot generation counters that make overlapping loads safe (see the shared sample-buffer cache section).
 
 ```supercollider
     var <pendingTriSinParams;  // Dictionary: cellId (Symbol) → Dictionary(paramKey → value)
     var <pendingRingerParams;
+    var <pendingSineParams;
     var <pendingSamplerParams; // Dictionary: slot (Integer) → Dictionary
     var <pendingOneShotParams;
 ```
@@ -83,7 +87,7 @@ A header comment naming the file's purpose. The class declaration opens with `Li
     // Granular delay state
     var <delayBuf, <micBus, <ptrBus;
     var <micGrp, <ptrGrp, <recGrp, <granGrp;
-    var <micSynth, <micDrySynth, <ptrSynth, <recSynth, <fbPatchMixSynth;
+    var <micSynth, <ptrSynth, <recSynth, <fbPatchMixSynth;
     var <grainSynths;
 ```
 
@@ -108,7 +112,7 @@ A header comment naming the file's purpose. The class declaration opens with `Li
     // Pending granular setter values — applied at end of ensureGranularChain's
     // fork. Solves the "user toggles granular before chain is alive → setter's
     // .set fires on nil synth → amp stuck at 0" silent-grain bug.
-    var <pendingMicAmp, <pendingMicDryAmp, <pendingGranularOutAmp;
+    var <pendingMicAmp, <pendingGranularOutAmp;
     var <pendingFbAmp, <pendingFbBalance, <pendingFbHpFreq;
     var <pendingFbNoise, <pendingFbSineLevel, <pendingFbSineHz;
 ```
@@ -296,21 +300,7 @@ The granular chain has seven SynthDefs. They're defined here so they're register
 
 The `amp.lag3(amp_slew)` uses `.lag3` (third-order lag, cubic) instead of `.lag` (first-order) — `.lag3` gives a smoother ramp, important for amp transitions that the user can hear.
 
-### `\liedMicDry`
-
-```supercollider
-        // Mic dry passthrough → main output bus (naherinlied feature, not in
-        // carters-delay-norns standalone)
-        SynthDef(\liedMicDry, {
-            arg in = 0, out = 0, amp = 0, amp_slew = 0.05;
-            var sig = SoundIn.ar(in) * amp.lag3(amp_slew);
-            Out.ar(out, [sig, sig]);
-        }).add;
-```
-
-**Lines 133-139**: a mic passthrough to the main output. Distinct from `liedMic`: this synth writes to `dryBus` (not `micBus`), and it writes as a stereo array `[sig, sig]` (duplicating mono to both channels). This is what lets the user route their mic input through the script without going through the granular chain.
-
-The comment notes this is a naherinlied feature, not in the original Carter's Delay design.
+> There is no mic dry-passthrough synth any more. The old `\liedMicDry` SynthDef (and its `micDrySynth`, `setMicDryAmp` and `set_mic_dry_amp` command) were removed: row 8 col 16 is now a shortcut to the norns **LEVELS monitor** (`monitor_level`), the hardware input monitor, so the dry mic never passes through SuperCollider at all and can't feed the feedback patch. See chapters 14 and 19.
 
 ### `\liedPtr`
 
@@ -335,14 +325,17 @@ The comment notes this is a naherinlied feature, not in the original Carter's De
             arg ptrIn = 0, micIn = 0, buf = 0, preLevel = 0;
             var ptr = In.ar(ptrIn, 1);
             var sig = In.ar(micIn, 1);
-            sig = sig + (BufRd.ar(1, buf, ptr) * preLevel);
+            // softclip bounds the recirculated part (|out| < 1), so at
+            // preLevel 1 the buffer can't grow without limit pass after pass.
+            // It's linear below 0.5, so normal-level material is untouched.
+            sig = sig + (BufRd.ar(1, buf, ptr) * preLevel).softclip;
             BufWr.ar(sig, buf, ptr);
         }).add;
 ```
 
 **Lines 148-155**: the recorder. Read the current pointer position, read the mic signal, mix in `preLevel` times the existing buffer content at the same position, write the result back to the buffer at the pointer.
 
-The `preLevel` parameter (defaulting to 0) controls feedback within the buffer. At 0, each write overwrites old content. At 1, each write sums new audio with old, producing accumulating layered material. The script doesn't currently expose preLevel as a user-controllable param (default is fixed at 0), but the SynthDef supports it for future expansion.
+The `preLevel` parameter (defaulting to 0) controls feedback within the buffer. At 0, each write overwrites old content. At 1, each write sums new audio with old, producing accumulating layered material. It is exposed to the user as the **buffer preservation** param (`buffer_preservation` → `engine.set_rec_pre_level` → `setRecPreLevel`). The recirculated part is passed through `.softclip`, which bounds it below 1 in magnitude: without it, `preLevel = 1` would let the buffer grow without limit on every pass; with it, the old material saturates gently instead (and is effectively linear below about 0.5, so ordinary levels are untouched).
 
 `BufRd.ar(1, buf, ptr)` reads 1 channel from `buf` at the `ptr` position. `BufWr.ar(sig, buf, ptr)` writes `sig` to `buf` at the `ptr` position.
 
@@ -395,11 +388,11 @@ The end result: turn up the amp and the granular chain self-modulates with the s
                 pan = 0, panRand = 0,
                 grainEnv = (-1), ptrBus = 0, ptrSampleDelay = 20000,
                 ptrRandSamples = 5000, minPtrDelay = 1000,
-                cutoff = 12000, resonance = 1;
-            var sig, env, densCtrl, durCtrl, rateCtrl, panCtrl,
+                cutoff = 12000, cutoffMax = 16000, resonance = 1;
+            var sig, env, grainTrigger, durCtrl, rateCtrl, panCtrl,
                 ptr, ptrRand, totalDelay, maxGrainDur;
             env = EnvGen.kr(Env.asr(atk, 1, rel), gate, doneAction: 2);
-            densCtrl = Select.ar(sync, [Dust.ar(dens), Impulse.ar(dens)]);
+            grainTrigger = CoinGate.ar(sync.clip(0, 1), Impulse.ar(dens)) + CoinGate.ar(1 - sync.clip(0, 1), Dust.ar(dens));
             durCtrl = baseDur * LFNoise1.ar(100).exprange(1 / durRand, durRand);
             rateCtrl = rate.lag3(0.5) * LFNoise1.ar(100).exprange(1 / rateRand, rateRand);
             panCtrl = pan + LFNoise1.kr(100).bipolar(panRand);
@@ -408,11 +401,11 @@ The end result: turn up the amp and the granular chain self-modulates with the s
             ptr = In.ar(ptrBus, 1);
             ptr = ptr - totalDelay;
             ptr = ptr / BufFrames.kr(buf);
-            maxGrainDur = (totalDelay / rateCtrl) / SampleRate.ir;
+            maxGrainDur = (totalDelay / rateCtrl.abs) / SampleRate.ir;
             durCtrl = min(durCtrl, maxGrainDur);
             sig = GrainBuf.ar(
                 2,
-                densCtrl,
+                grainTrigger,
                 durCtrl,
                 buf,
                 rateCtrl,
@@ -423,8 +416,8 @@ The end result: turn up the amp and the granular chain self-modulates with the s
             );
             sig = MoogFF.ar(
                 sig * env * amp.lag3(amp_slew),
-                freq: cutoff,
-                gain: resonance
+                freq: min(cutoff, cutoffMax).clip(50, 18000),
+                gain: resonance.clip(0, 4)
             );
             Out.ar(out, sig);
         }).add;
@@ -433,16 +426,17 @@ The end result: turn up the amp and the granular chain self-modulates with the s
 **Lines 172-214**: the grain reader, the heart of the granular chain. This deserves a careful walk:
 
 - **`env = EnvGen.kr(Env.asr(atk, 1, rel), gate, doneAction: 2)`** — an ASR envelope. The synth lives until the envelope hits 0 (gate goes low and release completes), then frees itself.
-- **`densCtrl = Select.ar(sync, [Dust.ar(dens), Impulse.ar(dens)])`** — grain density. `sync` arg selects between `Dust.ar(dens)` (random Poisson-distributed pulses, asynchronous) and `Impulse.ar(dens)` (regular pulses, synchronous). Default `sync = 1` means use Impulse.
+- **`grainTrigger = CoinGate.ar(sync, Impulse.ar(dens)) + CoinGate.ar(1 - sync, Dust.ar(dens))`** — the grain trigger stream. `sync` (0-1, the **grain sync distribution** param) is a probability that decides, trigger by trigger, between `Impulse.ar(dens)` (regular, synchronized pulses) and `Dust.ar(dens)` (random Poisson-distributed pulses). `sync = 1` (default) is all Impulse, `0` is all Dust, in between is a mix of both. `dens` is kept equal to `1 / (grainDur × |rate|)`, set at allocation and again by `applyTapRates` whenever the rates change.
 - **`durCtrl = baseDur * LFNoise1.ar(100).exprange(1 / durRand, durRand)`** — grain duration with random variation. `LFNoise1.ar(100)` is a 100 Hz random walk; `.exprange(min, max)` maps it exponentially to `[1/durRand, durRand]`. Multiplying `baseDur` by this produces a duration that varies exponentially around `baseDur`.
 - **`rateCtrl = rate.lag3(0.5) * LFNoise1.ar(100).exprange(...)`** — playback rate with random variation. Same pattern but with `.lag3(0.5)` smoothing on the central rate (so user rate changes don't click).
 - **`panCtrl = pan + LFNoise1.kr(100).bipolar(panRand)`** — stereo pan with random variation. `bipolar(panRand)` maps the random walk to `[-panRand, +panRand]`.
 - **`ptrRand = LFNoise1.ar(100).bipolar(ptrRandSamples)`** — random offset (in samples) added to the lookback distance, producing position variation between grains.
 - **`totalDelay = max(ptrSampleDelay - ptrRand, minPtrDelay)`** — the actual lookback distance for THIS grain at THIS moment. Clamped to a minimum to prevent reading too close to the write head.
 - **`ptr = In.ar(ptrBus, 1); ptr = ptr - totalDelay; ptr = ptr / BufFrames.kr(buf)`** — read the write-head position, back it up by `totalDelay`, normalize to 0-1 (GrainBuf expects normalized positions).
-- **`maxGrainDur = (totalDelay / rateCtrl) / SampleRate.ir; durCtrl = min(durCtrl, maxGrainDur)`** — cap the grain duration so the grain doesn't outrun the write head. If a grain plays for longer than `totalDelay / rateCtrl` seconds, it would catch up to the write head and play data that hasn't been written yet (or is currently being overwritten). The cap prevents this.
-- **`GrainBuf.ar(2, densCtrl, durCtrl, buf, rateCtrl, ptr, 4, panCtrl, grainEnv)`** — the actual grain reader. 2-channel output, density trigger, duration, buffer, rate, position, interpolation (4 = cubic), pan, env (-1 = use default Hanning window).
-- **`MoogFF.ar(...)`** — apply a resonant lowpass filter to the grain output. `cutoff` and `resonance` are user-controllable.
+- **`maxGrainDur = (totalDelay / rateCtrl.abs) / SampleRate.ir; durCtrl = min(durCtrl, maxGrainDur)`** — cap the grain duration so the grain doesn't outrun the write head. If a grain plays for longer than `totalDelay / |rate|` seconds, it would catch up to the write head and play data that hasn't been written yet (or is currently being overwritten). The cap prevents this.
+- **`GrainBuf.ar(2, grainTrigger, durCtrl, buf, rateCtrl, ptr, 4, panCtrl, grainEnv)`** — the actual grain reader. 2-channel output, density trigger, duration, buffer, rate, position, interpolation (4 = cubic), pan, env (-1 = built-in Hann window, otherwise a custom window buffer; see the grain window param).
+- **`MoogFF.ar(...)`** — apply a resonant lowpass filter to the grain output. `cutoff` (driven by a per-grain LFO Ndef) is capped at `cutoffMax` (the **grain cutoff ceiling** param), and `resonance` is clipped to 0-4.
+- A negative `rate` plays the grain backwards (the **grain reverse** param flips every other grain's rate negative).
 - **`Out.ar(out, sig)`** — write the filtered grains to `out` (typically dryBus).
 
 `★ Insight ─────────────────────────────────────`
@@ -469,13 +463,31 @@ The end result: turn up the amp and the granular chain self-modulates with the s
 
 The 0.5 gain is the mono-mix normalization (so a stereo signal of (L=1, R=1) becomes mono signal 1.0, not 2.0).
 
+## The voice SynthDefs (added here, not by the voice classes)
+
+```supercollider
+        // --- SynthDefs: voices ---
+        // Added here, where Crone has already booted the server. They used to
+        // come from a StartUp hook in each voice class calling
+        // Server.default.waitForBoot, which runs at every sclang start
+        // (whatever script is loaded) and could boot scsynth before Crone set
+        // it up — on norns only Crone may boot the server.
+        [TriSin, Ringer, Sine, Sampler, OneShot].do({ |voice| voice.addSynthDefs });
+```
+
+**Lines 238-244**: each voice class keeps its SynthDef in a class method, `*addSynthDefs` (chapters 05-08), and `Lied.init` calls all five right here, just before the `server.sync` barrier below. Because `init` runs inside `CroneEngine`'s alloc Routine, the server is already booted and configured by Crone when these lines execute, and the `server.sync` that follows waits for all five definitions to land before any voice is instantiated.
+
+`★ Insight ─────────────────────────────────────`
+**On norns, only Crone may boot the server.** Crone's own startup clears `SC_JACK_DEFAULT_INPUTS`/`OUTPUTS`, boots scsynth, and then connects it to JACK. A `StartUp.add { Server.default.waitForBoot { ... } }` hook inside a class library file runs at *every* sclang start, whatever script is loaded, and can fire before Crone's own hook, booting scsynth un-configured. The visible symptom is an intermittent `SUPERCOLLIDER FAIL` / `AUDIO ENGINE FAIL` after SYSTEM > RESTART (which restarts sclang but leaves JACK running). Moving the `.add` calls into `Lied.init` means this script never touches server boot, so a plain norns restart just works.
+`─────────────────────────────────────────────────`
+
 ## Instantiating the master FX (where order matters)
 
 ```supercollider
         server.sync;
 ```
 
-**Line 226**: barrier. Wait for the server to finish registering all the SynthDefs above before we try to instantiate them. (This used to be a `server.bind` block, but as the comment in section 5 explained, that had race conditions.)
+**Line 246**: barrier. Wait for the server to finish registering all the SynthDefs above (master FX, granular chain and the five voice classes) before we try to instantiate them. (This used to be a `server.bind` block, but as the comment in section 5 explained, that had race conditions.)
 
 ```supercollider
         // --- Instantiate master FX (persistent) ---
@@ -514,7 +526,16 @@ After this block, the execution order in fxGroup is `[delaySynth, reverbSynth]`,
         grainCutoffRates = Array.fill(grainCount, { rrand(1, 64) });
         grainResRates    = Array.fill(grainCount, { rrand(1, 64) });
         grainDelayScale  = 1.0;
-
+        grainWindowIndex       = 0;
+        grainCutoffCeiling     = 16000;
+        grainSyncDistribution  = 1.0;
+        granularFrozen         = false;
+        grainRateMult          = 1.0;
+        grainOctavesOn         = 0;
+        grainFifthsOn          = 0;
+        grainSuboctavesOn      = 0;
+        grainReverseOn         = 0;
+        recPreLevel            = 0.0;
         "Lied initialized.".postln;
     }
 ```
@@ -524,6 +545,7 @@ After this block, the execution order in fxGroup is `[delaySynth, reverbSynth]`,
 - **`granularAllocated = false`** — the lazy-alloc flag.
 - **`grainPanRates / grainCutoffRates / grainResRates`** — arrays of `grainCount` random integers in `[1, 64]`. `Array.fill(n, { block })` calls the block n times to construct an array. `rrand(1, 64)` is "random ranged integer in [1, 64]". These are the **periods** of each grain's pan/cutoff/res LFO; randomizing them gives each grain its own slowly-evolving modulation profile.
 - **`grainDelayScale = 1.0`** — the default scale for lookback distances.
+- **The remaining assignments** hold the defaults for the granular engine params: Hann window (`grainWindowIndex = 0`), cutoff ceiling 16000 Hz, sync distribution 1.0, not frozen, rate multiplier 1.0, octaves/fifths/sub-octaves/reverse off, and `recPreLevel = 0` (buffer preservation).
 
 The closing brace ends `init`.
 
@@ -616,7 +638,7 @@ This is the most complex method in the file. It's an idempotent constructor for 
     // -----------------------------------------------------------------
     // Lazy granular chain allocation
     // -----------------------------------------------------------------
-    // Called the first time any of mic_amp / mic_dry_amp / granular_out_amp
+    // Called the first time mic_amp or granular_out_amp
     // is set to a non-zero value. Allocates the delay buffer, mic chain,
     // recorder, fbPatchMix, and grainCount grain synths.
     // Idempotent — subsequent calls are no-ops once granularAllocated.
@@ -643,15 +665,20 @@ This is the most complex method in the file. It's an idempotent constructor for 
 
 ```supercollider
         fork {
-            // Buffer + buses
+            // Buffer + buses + custom grain envelope windows
             delayBuf = Buffer.alloc(server, server.sampleRate * (beat_sec * 512), 1);
+            grainEnvBufs = [
+                Buffer.sendCollection(server, Env.perc(0.01, 0.99, 1, -4).asSignal(512)),
+                Buffer.sendCollection(server, Env.new([0, 1, 0], [0.7, 0.3], [3, -3]).asSignal(512)),
+                Buffer.sendCollection(server, Env.new([0, 1, 0], [0.98, 0.02], [4, -4]).asSignal(512))
+            ];
             micBus = Bus.audio(server, 1);
             ptrBus = Bus.audio(server, 1);
 
             server.sync;
 ```
 
-**Lines 332-338**: the fork begins. `delayBuf = Buffer.alloc(server, ...)` allocates the long heap-based delay buffer. The size is `sampleRate × (beat_sec × 512)` — 512 beats of audio. At 120 BPM (beat_sec = 0.5), that's 256 seconds = ~12 MB stereo float. At 60 BPM, 256 sec; at 240 BPM, 64 sec. The buffer scales with the current tempo at alloc time.
+**Lines 332-338**: the fork begins. `grainEnvBufs` holds the three custom grain windows (percussive, swell, reverse swell) that the **grain window** param selects between; Hann (index 0) is GrainBuf's built-in window (env `-1`) and needs no buffer. `delayBuf = Buffer.alloc(server, ...)` allocates the long heap-based delay buffer. The size is `sampleRate × (beat_sec × 512)` — 512 beats of audio. At 120 BPM (beat_sec = 0.5), that's 256 seconds = ~12 MB stereo float. At 60 BPM, 256 sec; at 240 BPM, 64 sec. The buffer scales with the current tempo at alloc time.
 
 Note this is heap memory (via `Buffer.alloc`), not the real-time pool. This is what lets the script have a many-MB granular buffer without running into the same memory issue the delay's CombL does.
 
@@ -670,23 +697,22 @@ Note this is heap memory (via `Buffer.alloc`), not the real-time pool. This is w
 ```supercollider
             // Persistent chain synths (default amp = 0)
             micSynth        = Synth(\liedMic,        [\in, 0, \out, micBus, \amp, 0],     micGrp);
-            micDrySynth     = Synth(\liedMicDry,     [\in, 0, \out, dryBus, \amp, 0],     micGrp);
             fbPatchMixSynth = Synth(\liedFbPatchMix, [\in, 0, \out, micBus, \amp, 0],     micGrp, \addToHead);
             // Voice→granular send (reads granularBus, writes to micBus).
             // Lives in micGrp so it runs at the head of the chain.
             granSendSynth = Synth(\liedGranSend, [\in, granularBus, \out, micBus], micGrp);
-            ptrSynth        = Synth(\liedPtr,        [\buf, delayBuf, \out, ptrBus],      ptrGrp);
-            recSynth        = Synth(\liedRec,        [\ptrIn, ptrBus, \micIn, micBus, \buf, delayBuf], recGrp);
+            ptrSynth        = Synth(\liedPtr,        [\buf, delayBuf, \out, ptrBus, \rate, if (granularFrozen) { 0 } { 1 }], ptrGrp);
+            recSynth        = Synth(\liedRec,        [\ptrIn, ptrBus, \micIn, micBus, \buf, delayBuf, \preLevel, recPreLevel], recGrp);
+            if (granularFrozen) { recSynth.run(false); };
 ```
 
 **Lines 346-354**: instantiate the persistent chain synths. Walking each:
 
 - **`micSynth`** in `micGrp`, reads physical input 0, writes to micBus, default amp 0.
-- **`micDrySynth`** in `micGrp`, reads physical input 0, writes to dryBus, default amp 0.
 - **`fbPatchMixSynth`** in `micGrp` with `\addToHead` — placed at the very head of micGrp, ensures it reads bus 0 first (before any other writes to dryBus in this block can affect what InFeedback sees).
 - **`granSendSynth`** in `micGrp`, reads granularBus, writes to micBus. No specific positioning required.
-- **`ptrSynth`** in `ptrGrp`, writes the running phasor index to ptrBus.
-- **`recSynth`** in `recGrp`, reads ptrBus + micBus, mixes them (with optional preLevel feedback), writes to delayBuf.
+- **`ptrSynth`** in `ptrGrp`, writes the running phasor index to ptrBus. If the chain is allocated while frozen, it starts with `rate = 0`.
+- **`recSynth`** in `recGrp`, reads ptrBus + micBus, mixes them (with `preLevel` feedback = the buffer preservation param, softclipped), writes to delayBuf. If frozen, it starts paused (`run(false)`).
 
 ```supercollider
             // Grain LFOs (grainCount each)
@@ -739,7 +765,7 @@ These Ndefs run continuously after creation. When we instantiate the grain synth
             // Grain delays are scaled by grainDelayScale (default 1.0):
             //   scale=1.0 → 8..64 sec range (Carter's Delay character)
             //   scale=0.1 → 0.8..6.4 sec range (more immediate response)
-            grainRates  = [1/4, 1/2, 1, 3/2, 2].scramble;
+            grainRates  = this.computeTapRates;
             grainDurs   = grainCount.collect({ arg i; beat_sec * (i + 1); }).scramble;
             grainDelays = grainCount.collect({ arg i;
                 server.sampleRate * (beat_sec * (i + 1)) * 16 * grainDelayScale;
@@ -748,12 +774,13 @@ These Ndefs run continuously after creation. When we instantiate the grain synth
 
 **Lines 388-396**: per-grain parameter arrays. `.scramble` is SC's "shuffle an array randomly" method.
 
-- **`grainRates = [1/4, 1/2, 1, 3/2, 2].scramble`** — 5 fixed rates, randomly ordered. The grain synths cycle through this array (modulo) to assign per-grain playback rates.
+- **`grainRates = this.computeTapRates`** — one playback rate per grain, from a 4-voice table chosen by the octaves / fifths & 4ths / sub-octaves switches (default table `[1/4, 1/2, 1, 3/2]`, the Carter's Delay rates; e.g. all three on gives `[1/2, 1, 3/2, 2]`). Every rate is multiplied by `grainRateMult`, and with **grain reverse** on, every other grain's rate is negated. The same method is re-run by `applyTapRates` when any of those params change live (which also recomputes each grain's `\dens`).
 - **`grainDurs = grainCount.collect({ arg i; beat_sec * (i + 1) }).scramble`** — `grainCount` durations, each `beat_sec * (i + 1)`. For grainCount = 4: durations of 1, 2, 3, 4 beats (in seconds). Scrambled.
 - **`grainDelays = grainCount.collect({ ... }).scramble`** — per-grain lookback distances. The formula `sampleRate × (beat_sec × (i + 1)) × 16` is "i+1 beats worth of samples times 16" — giving lookback distances of 16, 32, 48, 64 beats for i = 0..3. The `* grainDelayScale` lets the user shrink these.
 
 ```supercollider
             grainSynths = grainCount.collect({ arg n;
+                var envBufNum = if (grainWindowIndex == 0) { -1 } { grainEnvBufs[grainWindowIndex - 1].bufnum };
                 Synth(\liedGran, [
                     \amp, 0,
                     \buf, delayBuf,
@@ -761,20 +788,21 @@ These Ndefs run continuously after creation. When we instantiate the grain synth
                     \atk, 1,
                     \rel, 1,
                     \gate, 1,
-                    \sync, 1,
-                    \dens, 1 / (grainDurs[n] * grainRates[n % 5]),
+                    \sync, grainSyncDistribution,
+                    \dens, 1 / (grainDurs[n] * grainRates[n].abs),
                     \baseDur, grainDurs[n],
                     \durRand, 1,
-                    \rate, grainRates[n % 5],
+                    \rate, grainRates[n],
                     \rateRand, 1,
                     \pan, grainPanLFOs[n],
                     \panRand, 0,
-                    \grainEnv, -1,
+                    \grainEnv, envBufNum,
                     \ptrBus, ptrBus,
                     \ptrSampleDelay, grainDelays[n],
                     \ptrRandSamples, server.sampleRate * (beat_sec * ((n % grainCount) + 1)) * 2,
                     \minPtrDelay, grainDelays[n],
                     \cutoff, grainCutoffLFOs[n],
+                    \cutoffMax, grainCutoffCeiling,
                     \resonance, grainResLFOs[n]
                 ], granGrp);
             });
@@ -782,7 +810,7 @@ These Ndefs run continuously after creation. When we instantiate the grain synth
 
 **Lines 398-422**: instantiate the grain synths. `grainCount.collect` runs the block N times and returns an array of the results.
 
-Each grain synth gets its specific rate, duration, delay, and modulation Ndefs. The `n % 5` is because `grainRates` has 5 entries (for the 5 fixed rates) while grainCount could be anything (4 in this build). The `n % grainCount` for `ptrRandSamples` ensures the variation amount is bounded.
+Each grain synth gets its specific rate, duration, delay, and modulation Ndefs. `grainRates` already has exactly `grainCount` entries, so it is indexed directly. The `n % grainCount` for `ptrRandSamples` ensures the variation amount is bounded.
 
 The `\pan, grainPanLFOs[n]` is the Ndef-passing idiom: when you pass an Ndef as an arg value, SC routes the Ndef's output into the synth's input for that arg.
 
@@ -792,7 +820,6 @@ The `\pan, grainPanLFOs[n]` is the Ndef-passing idiom: when you pass an Ndef as 
             // makes "toggle granular_out on" actually set granGrp's amp on the
             // first toggle instead of requiring an off-then-on workaround.
             if (pendingMicAmp.notNil)        { micSynth.set(\amp, pendingMicAmp); };
-            if (pendingMicDryAmp.notNil)     { micDrySynth.set(\amp, pendingMicDryAmp); };
             if (pendingGranularOutAmp.notNil) { granGrp.set(\amp, pendingGranularOutAmp); };
             if (pendingFbAmp.notNil)         { fbPatchMixSynth.set(\amp, pendingFbAmp); };
             if (pendingFbBalance.notNil)     { fbPatchMixSynth.set(\balance, pendingFbBalance); };
@@ -834,14 +861,19 @@ End result: the setter call appears to "just work" from the user's perspective, 
         granGrp.free;
         recGrp.free;
         ptrGrp.free;
-        granSendSynth = nil;
+        granSendSynth = nil;  // freed by micGrp.free below
         micGrp.free;
+        if (grainEnvBufs.notNil) {
+            grainEnvBufs.do({ arg b; if (b.notNil) { b.free; } });
+            grainEnvBufs = nil;
+        };
+        granularFrozen = false;
         delayBuf.free;
         micBus.free;
         ptrBus.free;
 ```
 
-**Lines 446-460**: free each resource in reverse order. Ndefs first (the LFOs), then the four groups in reverse (granGrp, recGrp, ptrGrp, micGrp — micGrp last because it contained granSendSynth). Then the buffer and the two buses.
+**Lines 446-460**: free each resource in reverse order. Ndefs first (the LFOs), then the four groups in reverse (granGrp, recGrp, ptrGrp, micGrp — micGrp last because it contained granSendSynth). Then the custom grain-window buffers, the freeze flag reset, the delay buffer and the two buses.
 
 ```supercollider
         grainSynths = nil;
@@ -849,7 +881,6 @@ End result: the setter call appears to "just work" from the user's perspective, 
         grainCutoffLFOs = nil;
         grainResLFOs = nil;
         micSynth = nil;
-        micDrySynth = nil;
         ptrSynth = nil;
         recSynth = nil;
         fbPatchMixSynth = nil;
@@ -870,7 +901,6 @@ End result: the setter call appears to "just work" from the user's perspective, 
         // Clear pending values so a future ensureGranularChain doesn't apply
         // stale values from a previous lifecycle.
         pendingMicAmp = nil;
-        pendingMicDryAmp = nil;
         pendingGranularOutAmp = nil;
         pendingFbAmp = nil;
         pendingFbBalance = nil;
@@ -887,7 +917,7 @@ End result: the setter call appears to "just work" from the user's perspective, 
 
 ## Granular setters (cache-then-apply, with lazy alloc)
 
-Nine setters for the granular chain. They all follow the same pattern:
+The simple setters for the granular chain (mic amp, granular out amp, six feedback patch setters). They all follow the same pattern:
 
 ```supercollider
     setMicAmp { arg amp;
@@ -904,12 +934,6 @@ Nine setters for the granular chain. They all follow the same pattern:
 3. **Apply now** if the chain is alive and micSynth is non-nil. The `and: { ... }` is SC's short-circuit "lazy and" — second clause only evaluated if first is true.
 
 ```supercollider
-    setMicDryAmp { arg amp;
-        pendingMicDryAmp = amp;
-        if (amp > 0) { this.ensureGranularChain };
-        if (granularAllocated and: { micDrySynth.notNil }) { micDrySynth.set(\amp, amp) };
-    }
-
     setGranularOutAmp { arg amp;
         pendingGranularOutAmp = amp;
         if (amp > 0) { this.ensureGranularChain };
@@ -917,7 +941,7 @@ Nine setters for the granular chain. They all follow the same pattern:
     }
 ```
 
-**Lines 500-510**: same pattern for mic dry amp and granular output amp. Note `granGrp.set(\amp, amp)` — setting a group's `amp` arg propagates to every synth inside the group that has an `amp` arg. So one call sets the amp on all 4 grain synths.
+**Lines 500-510**: same pattern for granular output amp (the old `setMicDryAmp` is gone along with the mic dry synth). Note `granGrp.set(\amp, amp)` — setting a group's `amp` arg propagates to every synth inside the group that has an `amp` arg. So one call sets the amp on all 4 grain synths.
 
 ```supercollider
     setFbPatchAmp { arg amp;
@@ -951,7 +975,7 @@ Nine setters for the granular chain. They all follow the same pattern:
     }
 ```
 
-**Lines 512-540**: the six feedback patch setters. Each follows the cache-then-apply pattern. Notably, these do NOT call `ensureGranularChain` — even if the feedback amp is set, we don't auto-allocate the chain. The user must enable mic / granular out / mic dry to trigger alloc.
+**Lines 512-540**: the six feedback patch setters. Each follows the cache-then-apply pattern. Notably, these do NOT call `ensureGranularChain` — even if the feedback amp is set, we don't auto-allocate the chain. The user must enable mic / granular out to trigger alloc.
 
 ```supercollider
     setGrainPanRate { arg grainIdx, rate;
@@ -980,6 +1004,53 @@ Nine setters for the granular chain. They all follow the same pattern:
 ```
 
 **Lines 542-564**: three per-grain modulation setters. The `if (grainIdx >= grainCount) { ^this }` is bounds-checking — out-of-range grain indices return early without writing.
+
+## Granular engine setters (freeze, window, rates)
+
+Besides the amp and LFO setters, the kernel exposes the "granular engine" controls that `grid_grain_params.lua` wires up (chapter 14). They follow the same shape: cache the value in an instance variable, then apply it if the chain is alive.
+
+```supercollider
+    setGranularFreeze { arg freeze;
+        granularFrozen = (freeze > 0);
+        if (granularAllocated and: { ptrSynth.notNil and: { recSynth.notNil } }) {
+            if (granularFrozen) {
+                server.makeBundle(nil, { ptrSynth.set(\rate, 0); recSynth.run(false); });
+            } {
+                server.makeBundle(nil, { ptrSynth.set(\rate, 1); recSynth.run(true); });
+            };
+        };
+    }
+```
+
+**Freeze** stops the write head (`ptrSynth` rate 0) and pauses the recorder, in one bundle so they change on the same block. The grains keep reading the buffer. The flag is cached, so a chain allocated while frozen starts frozen (see `ensureGranularChain`).
+
+- **`setRecPreLevel`** — clips to 0-1 and sets `recSynth`'s `preLevel` (buffer preservation).
+- **`setGrainWindow`** — index 0-3 into hann / percussive / swell / reverse swell; sets each grain synth's `grainEnv` to `-1` (Hann) or the matching `grainEnvBufs` buffer number.
+- **`setGrainSyncDistribution`** — clips 0-1 and does `granGrp.set(\sync, ...)`.
+- **`setGrainCutoffCeiling`** — clips 200-18000 and does `granGrp.set(\cutoffMax, ...)`.
+- **`setGrainRateMult`, `setGrainOctaves`, `setGrainFifths`, `setGrainSuboctaves`, `setGrainReverse`** — store the value and call `applyTapRates`.
+
+```supercollider
+    applyTapRates {
+        var finalRates = this.computeTapRates;
+        grainRates = finalRates;
+        if (granularAllocated and: { grainSynths.notNil }) {
+            grainCount.do({ |i|
+                if (grainSynths[i].notNil) {
+                    grainSynths[i].set(
+                        \rate, finalRates[i],
+                        \dens, 1 / (grainDurs[i] * finalRates[i].abs));
+                };
+            });
+        };
+    }
+```
+
+`applyTapRates` pushes new rates to the live grains **and** recomputes each grain's `dens` with the same formula used at allocation. `dens` is the trigger density, `1 / (grainDur × |rate|)`: without updating it, a grain whose rate changed would keep triggering at its old density and sound different from a freshly allocated chain.
+
+## Per-cell Sine lifecycle
+
+`allocSine`, `freeSine`, `triggerSine` and `setSineParam` mirror the TriSin lifecycle exactly (`sineInstances`, `pendingSineParams`, `Sine.new(dryBus, reverbBus, delayBus, granularBus)`). Sine is the simplest voice and the default role of all 16 row-2 cells; its source is `lib/Sine.sc` (same voice-class structure as chapters 05-06).
 
 ## Per-cell TriSin lifecycle
 
@@ -1069,127 +1140,173 @@ Nine setters for the granular chain. They all follow the same pattern:
 
 This duplication is intentional. Abstracting it (e.g., a generic `allocVoice(class, cellId, ...)`) would add an indirection layer that the Lua-side `engine.<role>_alloc` calls don't benefit from. Keeping them separate is more readable and easier to specialize per-class if needed.
 
-## Sampler lifecycle, with the buffer cache + `\loading` sentinel
+## Shared sample-buffer cache (samplers and one-shots)
 
-The most complex lifecycle in the file. `loadSampler` handles file loading, dedup via the buffer cache, the `\loading` sentinel for concurrency, and pending param application.
+Looping samplers and one-shots load audio the same way, through one set of helpers (`lib/Lied.sc` lines 855-958). Both voices share a single cache, so the same file loaded into a sampler and a one-shot costs one buffer.
+
+```supercollider
+    bumpGen { arg gens, slot;
+        gens[slot] = (gens[slot] ? 0) + 1;
+        ^gens[slot];
+    }
+```
+
+**`bumpGen`** (line 873): bump and return a slot's generation counter. There are two counter dictionaries, `samplerLoadGen` and `oneShotLoadGen`, and the helper takes whichever one applies. Every load **and every clear** calls it. A load fork remembers the number it was given; if the counter has moved on by the time the fork finishes, a newer request exists and this one is stale. `Lied.free` bumps every slot of both dictionaries too, so no load can install onto freed buses.
+
+```supercollider
+    sampleFileOk { arg label, slot, filePath;
+        var sf = SoundFile.openRead(filePath);
+        var duration;
+        if (sf.isNil) {
+            (label ++ " " ++ slot ++ " load failed: cannot open " ++ filePath).postln;
+            ^false
+        };
+        duration = sf.numFrames / sf.sampleRate;
+        sf.close;
+        if (duration > 600) {
+            (label ++ " " ++ slot ++ " load REFUSED: " ++ duration.round(0.1)
+                ++ "s exceeds 600s max (would exhaust Norns RAM).").postln;
+            ^false
+        };
+        ^true
+    }
+```
+
+**`sampleFileOk`** (line 880): the pre-flight check, shared by both voices. `SoundFile.openRead` reads only the header; `nil` means the file can't be opened. `duration = numFrames / sampleRate` is checked against the 600 s (10 minute) cap, and `sf.close` releases the handle (`Buffer.read` re-opens the file itself). `label` ("Sampler" or "OneShot") only changes the log text.
+
+```supercollider
+    readStereoBuffer { arg filePath;
+        var sf = SoundFile.openRead(filePath);
+        var numChannels = 2;
+        if (sf.notNil) { numChannels = sf.numChannels; sf.close };
+        ^if (numChannels == 2) {
+            Buffer.read(server, filePath)
+        } {
+            Buffer.readChannel(server, filePath,
+                channels: if (numChannels == 1) { [0, 0] } { [0, 1] })
+        };
+    }
+```
+
+**`readStereoBuffer`** (line 898): **every cached buffer is 2-channel.** Stereo files load with `Buffer.read`; mono files load with `Buffer.readChannel(channels: [0, 0])`, which reads the one channel into both; files with more than two channels keep their first two (`[0, 1]`). The reason is that `Sampler` reads with `BufRd.ar(2, ...)` and `OneShot` with `PlayBuf.ar(2, ...)`. A buffer UGen asked for more channels than the buffer has plays only the channels it finds, so a mono file used to come out of the **left speaker only**. Dual-mono buffers fix that without any special case in the voices (chapters 07 and 08).
+
+```supercollider
+    acquireBuffer { arg filePath;
+        var buf;
+        while ({ bufferCache[filePath] == \loading }) { 0.05.wait };
+        buf = bufferCache[filePath];
+        if (buf.notNil) {
+            bufferRefCounts[filePath] = (bufferRefCounts[filePath] ? 0) + 1;
+        } {
+            bufferCache[filePath] = \loading;
+            buf = this.readStereoBuffer(filePath);
+            server.sync;
+            bufferCache[filePath] = buf;
+            bufferRefCounts[filePath] = 1;
+        };
+        ^buf;
+    }
+
+    releaseBuffer { arg filePath;
+        if (bufferRefCounts[filePath].notNil) {
+            bufferRefCounts[filePath] = bufferRefCounts[filePath] - 1;
+            if (bufferRefCounts[filePath] <= 0) {
+                // free the Buffer (unless it's the \loading sentinel), clear cache + refcount
+            };
+        };
+    }
+```
+
+**`acquireBuffer` / `releaseBuffer`** (lines 912 and 932): the cache-hit / `\loading`-sentinel / refcount logic.
+
+- **Polling wait**: if `bufferCache[filePath] == \loading`, another fork is reading this file right now. Wait 50 ms and check again, so two forks never read the same file twice and orphan a buffer.
+- **Cache hit**: increment the refcount and reuse the buffer.
+- **Cache miss**: claim the entry with the `\loading` sentinel, read through `readStereoBuffer`, `server.sync`, replace the sentinel with the real buffer, refcount 1.
+
+`acquireBuffer` must run inside a Routine (it waits). `releaseBuffer` drops one reference and frees the Buffer at zero, guarding against freeing the `\loading` sentinel and skipping silently if the refcount entry is missing (a defensive check against cache desync).
+
+```supercollider
+    carryVoiceParams { arg old, inst, keys;
+        old.voiceParams[old.class.voiceKeys[0]].keysValuesDo({ |k, v|
+            if (keys.includes(k)) { inst.setParam('all', k, v) };
+        });
+    }
+```
+
+**`carryVoiceParams`** (line 951): copy the outgoing instance's live params onto its replacement, so reloading a sample keeps the user's sound instead of resetting to SynthDef defaults. Voice 1 holds what `setParam('all', ...)` last wrote, and any `set_param` that arrived mid-load landed on the old instance, so it's included. Only the keys in `keys` are copied (the params Lua owns, not per-trigger values or bus routing).
+
+## Sampler lifecycle (async loads, generations, carry-over)
+
+Looping samplers now load exactly like one-shots: asynchronously, cancellable, and with the old instance playing until the swap.
 
 ```supercollider
     loadSampler { arg slot, filePath;
-        fork {
-            var sf, duration, buf, pending;
-            var maxSec = 600;
-            sf = SoundFile.openRead(filePath);
-            if (sf.isNil) {
-                ("Sampler " ++ slot ++ " load failed: cannot open " ++ filePath).postln;
-            } {
-                duration = sf.numFrames / sf.sampleRate;
-                sf.close;
-```
-
-**Lines 676-687**: pre-flight check. `SoundFile.openRead(filePath)` opens the file's header for inspection (without loading the audio data). `nil` means the file can't be read. If it can:
-- `duration = numFrames / sampleRate` gives the duration in seconds.
-- `sf.close` releases the file handle (we don't need it for actual loading; `Buffer.read` re-opens internally).
-
-```supercollider
-                if (duration > maxSec) {
-                    ("Sampler " ++ slot ++ " load REFUSED: "
-                        ++ duration.round(0.1) ++ "s exceeds "
-                        ++ maxSec ++ "s max (would exhaust Norns RAM).").postln;
+        // Bump first: even a refused load cancels older loads still in flight
+        var gen = this.bumpGen(samplerLoadGen, slot);
+        if (this.sampleFileOk("Sampler", slot, filePath)) {
+            fork {
+                var buf = this.acquireBuffer(filePath);
+                if (samplerLoadGen[slot] != gen) {
+                    // A newer load/clear for this slot arrived while we were reading.
+                    this.releaseBuffer(filePath);
+                    ("Sampler " ++ slot ++ " load superseded: " ++ filePath).postln;
                 } {
-                    if (samplerInstances[slot].notNil) {
-                        this.clearSampler(slot);
-                    };
-```
-
-**Lines 687-696**: enforce the 10-minute cap. Files longer than `maxSec` (600 seconds = 10 minutes) are refused. The log message explains why (RAM exhaustion).
-
-If we're proceeding with the load, clear any existing sampler in this slot first. `clearSampler` handles refcount maintenance for the previous buffer.
-
-```supercollider
-                    while ({ bufferCache[filePath] == \loading }) { 0.05.wait };
-                    buf = bufferCache[filePath];
-                    if (buf.notNil) {
-                        bufferRefCounts[filePath] = (bufferRefCounts[filePath] ? 0) + 1;
-                        ("Sampler " ++ slot ++ " reusing cached buffer: " ++ filePath
-                            ++ " (refs=" ++ bufferRefCounts[filePath] ++ ")").postln;
-                    } {
-                        bufferCache[filePath] = \loading;
-                        buf = Buffer.read(server, filePath);
-                        server.sync;
-                        bufferCache[filePath] = buf;
-                        bufferRefCounts[filePath] = 1;
-                        ("Sampler " ++ slot ++ " loaded new buffer: " ++ filePath
-                            ++ " (" ++ duration.round(0.1) ++ "s)").postln;
-                    };
-```
-
-**Lines 702-716**: the buffer cache + `\loading` sentinel logic (detailed below in section 15).
-
-- **Polling wait**: if `bufferCache[filePath] == \loading`, another fork is currently loading this file. Wait 50 ms and check again. Loop until either the sentinel is replaced (load complete) or never set (no concurrent load).
-- **Cache hit**: increment refcount, reuse the buffer.
-- **Cache miss**: claim the slot with the `\loading` sentinel, do `Buffer.read`, sync, replace sentinel with real buffer, set refcount to 1.
-
-```supercollider
-                    samplerInstances[slot] = Sampler.new(buf, dryBus.index, reverbBus.index, delayBus.index, granularBus.index);
-                    pending = pendingSamplerParams[slot];
-                    if (pending.notNil) {
-                        pending.keysValuesDo({ |k, v|
-                            samplerInstances[slot].setParam('all', k, v);
-                        });
-                        pendingSamplerParams[slot] = nil;
-                        ("Sampler " ++ slot ++ " loaded"
-                            ++ " (applied " ++ pending.size ++ " pending params)").postln;
-                    };
-                    samplerPaths[slot] = filePath;
-```
-
-**Lines 717-728**: construct the `Sampler` instance and apply pending params (same shape as TriSin alloc). Also record the path in `samplerPaths[slot]` so we can find it later for refcount maintenance.
-
-```supercollider
+                    this.installSampler(slot, buf, filePath);
+                    ("Sampler " ++ slot ++ " loaded " ++ filePath).postln;
                 };
             };
         };
     }
 ```
 
-**Lines 729-732**: close the conditional braces + the fork + the method.
+**`loadSampler`** (line 963): check the file with `sampleFileOk`, take a generation number from `bumpGen(samplerLoadGen, slot)`, fork, and `acquireBuffer`. If the generation moved on while the file was reading, the fork is **superseded**: it releases the reference it just took and installs nothing, so back-to-back loads (PSET recall, E3 stepping through files) can't overwrite each other's instances or leak refcounts. Otherwise it calls `installSampler`. Note that the old sampler is **no longer cleared first**; it keeps playing while the new file reads.
 
-### `clearSampler`
+```supercollider
+    installSampler { arg slot, buf, filePath;
+        var carryKeys = #[\amp, \amp_slew, \cutoff, \cutoff_slew, \resonance,
+            \pan, \pan_slew, \rate, \rateSlew,
+            \dry_send, \reverb_send, \delay_send, \granular_send];
+        var old = samplerInstances[slot];
+        var oldPath = samplerPaths[slot];
+        var pending = pendingSamplerParams[slot];
+        var inst = Sampler.new(buf, dryBus.index, reverbBus.index, delayBus.index, granularBus.index);
+        if (old.notNil) {
+            this.carryVoiceParams(old, inst, carryKeys);
+            old.free;
+        };
+        if (pending.notNil) {
+            pending.keysValuesDo({ |k, v| inst.setParam('all', k, v) });
+            pendingSamplerParams[slot] = nil;
+        };
+        samplerInstances[slot] = inst;
+        samplerPaths[slot] = filePath;
+        if (oldPath.notNil) { this.releaseBuffer(oldPath) };
+    }
+```
+
+**`installSampler`** (line 981) swaps the new instance in:
+
+- The old instance's live Lua-owned params (amp, slews, cutoff, resonance, pan, rate, the four sends) are carried over with `carryVoiceParams`, then the old instance is freed.
+- Pending params are applied on top, then cleared.
+- The **old path's buffer reference is released only after the new instance holds its own**, so reloading the same file never frees and re-reads it.
 
 ```supercollider
     clearSampler { arg slot;
         var inst = samplerInstances[slot];
         var path = samplerPaths[slot];
+        this.bumpGen(samplerLoadGen, slot);  // cancel any load still in flight
         if (inst.notNil) {
             inst.free;
             samplerInstances[slot] = nil;
-            pendingSamplerParams[slot] = nil;
-            if (path.notNil and: { bufferRefCounts[path].notNil }) {
-                bufferRefCounts[path] = bufferRefCounts[path] - 1;
-                if (bufferRefCounts[path] <= 0) {
-                    if (bufferCache[path].notNil
-                        and: { bufferCache[path] != \loading }) {
-                        bufferCache[path].free;
-                    };
-                    bufferCache[path] = nil;
-                    bufferRefCounts[path] = nil;
-                    ("Buffer freed: " ++ path).postln;
-                };
-            };
-            samplerPaths[slot] = nil;
+            pendingSamplerParams[slot] = nil;  // clear stale pending
             ("Sampler " ++ slot ++ " cleared").postln;
         };
+        if (path.notNil) { this.releaseBuffer(path) };
+        samplerPaths[slot] = nil;
     }
 ```
 
-**Lines 734-761**: clear a sampler slot with full refcount maintenance:
-
-1. Free the instance, null out the entry.
-2. Look up the path. **Defensive nil-check**: if `bufferRefCounts[path]` is nil (cache desync), skip the decrement to avoid a `nil - 1` error.
-3. Decrement refcount. If it hits 0, free the buffer (with the sentinel-guard to avoid freeing `\loading`).
-4. Null out the path reference.
-
-The defensive nil-check was added during development after observing a PSET-load scenario that could desync the cache. Better to skip cleanup silently than to throw.
+**`clearSampler`** (line 1006): bump the generation first, so a load still in flight is cancelled (it releases its own buffer when it finishes), then free the instance and release the path's single reference.
 
 ### `triggerSampler` and `setSamplerParam`
 
@@ -1214,28 +1331,108 @@ The defensive nil-check was added during development after observing a PSET-load
     }
 ```
 
-**Lines 763-781**: trigger and setParam, parallel to the TriSin patterns.
+**Lines 1020-1036**: trigger and setParam, parallel to the TriSin patterns.
 
-## OneShot lifecycle (same shape as sampler)
+## OneShot lifecycle (folders, generations, carry-over)
 
-`loadOneShot`, `clearOneShot`, `triggerOneShot`, `setOneShotParam` — all structurally identical to the Sampler equivalents except for:
-
-- Different dict references (`oneShotInstances`, `oneShotPaths`, `pendingOneShotParams`).
-- Different class instantiation (`OneShot.new(buf, ...)` instead of `Sampler.new`).
-- Different trigger signature (no startPos/endPos; just rate).
-
-The buffer cache logic is the same — OneShot and Sampler share the cache, so loading the same file into a Sampler slot and a OneShot slot only costs one buffer.
+One-shots add one twist to the shared machinery: a slot can hold **several buffers** (a folder of samples). The code is built on the helpers above.
 
 ```supercollider
-    triggerOneShot { arg slot, voiceKey, rate;
-        var inst = oneShotInstances[slot];
-        if (inst.notNil) {
-            inst.triggerWithRate(voiceKey, rate);
-        }
+    loadOneShotPaths { arg slot, filePaths, label, gen;
+        fork {
+            var buffers = List.new, acquired = List.new;
+            filePaths.do({ |p|
+                if (oneShotLoadGen[slot] == gen) {
+                    buffers.add(this.acquireBuffer(p));
+                    acquired.add(p);
+                };
+            });
+            if (oneShotLoadGen[slot] != gen) {
+                acquired.do({ |p| this.releaseBuffer(p) });
+                ("OneShot " ++ slot ++ " load superseded: " ++ label).postln;
+            } {
+                this.installOneShot(slot, buffers.asArray, filePaths);
+                ...
+            };
+        };
     }
 ```
 
-**Lines 863-868**: note the call is `inst.triggerWithRate(voiceKey, rate)` not just `inst.trigger(...)`. The OneShot class has a separate method for rate-only triggers (it has a `triggerWithRate` that wraps the more general `trigger`). The Sampler's signature is `trigger(voiceKey, startPos, endPos, rate)`; OneShot's `triggerWithRate` is `(voiceKey, rate)`.
+**`loadOneShotPaths`** (line 1052): take the generation number its caller just bumped, fork, and acquire a buffer for every path, **stopping as soon as the generation changes** so a cancelled folder load doesn't keep reading (and holding in RAM) the rest of its files. A **superseded** fork releases only the references it actually acquired and installs nothing; the newest request always wins.
+
+```supercollider
+    installOneShot { arg slot, buffers, filePaths;
+        var carryKeys = #[\amp, \amp_slew, \cutoff, \cutoff_slew, \resonance,
+            \pan, \pan_slew, \dry_send, \reverb_send, \delay_send, \granular_send];
+        var old = oneShotInstances[slot];
+        var oldPaths = oneShotPaths[slot];
+        var pending = pendingOneShotParams[slot];
+        var inst = OneShot.new(buffers, dryBus.index, reverbBus.index, delayBus.index, granularBus.index);
+        if (old.notNil) {
+            this.carryVoiceParams(old, inst, carryKeys);
+            old.free;
+        };
+        if (pending.notNil) { ... apply, then pendingOneShotParams[slot] = nil };
+        oneShotInstances[slot] = inst;
+        oneShotPaths[slot] = filePaths;
+        if (oldPaths.notNil) { oldPaths.do({ |p| this.releaseBuffer(p) }) };
+    }
+```
+
+**`installOneShot`** (line 1074) has the same shape as `installSampler`: carry the live params over (no `rate` keys; a one-shot's rate is per trigger), apply pending params, and release the old paths only after the new ones are held.
+
+```supercollider
+    loadOneShot { arg slot, filePath;
+        // Bump first: even a refused load cancels older loads still in flight.
+        var gen = this.bumpGen(oneShotLoadGen, slot);
+        if (this.sampleFileOk("OneShot", slot, filePath)) {
+            this.loadOneShotPaths(slot, [filePath], filePath, gen);
+        };
+    }
+
+    loadOneShotFiles { arg slot, pathList;
+        var paths = pathList.split($\n).reject({ |p| p.isEmpty });
+        if (paths.isEmpty) {
+            this.clearOneShot(slot);
+        } {
+            this.loadOneShotPaths(slot, paths, paths.size.asString ++ " files",
+                this.bumpGen(oneShotLoadGen, slot));
+        };
+    }
+```
+
+Both loaders bump the generation **before** checking the file, so even a load that `sampleFileOk` refuses cancels any older load still in flight for that slot; otherwise an earlier file could finish and install over the one the user picked last. `loadSampler` does the same.
+
+A single file is just a one-element path Array, so `oneShotPaths[slot]` is **always an Array** (an earlier version stored a bare String there, and `clearOneShot` then iterated its characters and never freed the buffer). Folder loading is `loadOneShotFiles` (lines 1106-1117), reached from the `oneshot_load_files` engine command. Its second argument is a **newline-separated list of absolute paths built by Lua** (`load_oneshot_folder` in chapter 13): Lua scans, sorts, filters and budgets the folder, so Lua's file count and order are exactly what the trigger's `bufIdx` indexes here. An empty list clears the slot.
+
+```supercollider
+    clearOneShot { arg slot;
+        var inst = oneShotInstances[slot];
+        var paths = oneShotPaths[slot];
+        this.bumpGen(oneShotLoadGen, slot);  // cancel any load still in flight
+        if (inst.notNil) {
+            inst.free;
+            oneShotInstances[slot] = nil;
+            pendingOneShotParams[slot] = nil;
+            ("OneShot " ++ slot ++ " cleared").postln;
+        };
+        if (paths.notNil) { paths.do({ |p| this.releaseBuffer(p) }) };
+        oneShotPaths[slot] = nil;
+    }
+```
+
+`clearOneShot` (line 1114) bumps the generation, so a load still in flight is cancelled, then frees the instance and releases one reference per path.
+
+```supercollider
+    triggerOneShot { arg slot, voiceKey, rate = 1, bufIdx = 0, ampScale = 1.0;
+        var inst = oneShotInstances[slot];
+        if (inst.notNil) {
+            inst.triggerWithRate(voiceKey, rate, bufIdx, ampScale);
+        };
+    }
+```
+
+**`triggerOneShot`** (line 1128): besides `rate`, a trigger carries `bufIdx` (which buffer of the folder to play) and `ampScale` (the accent multiplier). `setOneShotParam` still caches into `pendingOneShotParams` when there's no instance.
 
 ## Panic helpers
 
@@ -1253,7 +1450,7 @@ The buffer cache logic is the same — OneShot and Sampler share the cache, so l
     }
 ```
 
-**Lines 888-898**: iterate over the instance dicts and call `resetVoices` on each. `resetVoices` (defined on the voice classes, chapters 07-08) frees all voice subgroups and recreates them empty — clearing any active notes without freeing the instance.
+**Lines 1153-1163**: iterate over the instance dicts and call `resetVoices` on each. `resetVoices` (defined on the voice classes, chapters 07-08) frees all voice subgroups and recreates them empty — clearing any active notes without freeing the instance.
 
 These are called from the Lua panic handler (the K1 panic flow, or explicit param). The user can immediately silence all in-flight notes without re-loading any files or instances.
 
@@ -1261,14 +1458,17 @@ These are called from the Lua panic handler (the K1 panic flow, or explicit para
 
 ```supercollider
     free {
+        oneShotLoadGen.keys.do { |slot| this.bumpGen(oneShotLoadGen, slot) };
+        samplerLoadGen.keys.do { |slot| this.bumpGen(samplerLoadGen, slot) };
         triSinInstances.do { |inst| inst.free };
         ringerInstances.do { |inst| inst.free };
+        sineInstances.do { |inst| inst.free };
         samplerInstances.do { |inst| inst.free };
         oneShotInstances.do { |inst| inst.free };
         if (granularAllocated) { this.freeGranularChain };
 ```
 
-**Lines 900-905**: free every voice instance. `.do { |inst| inst.free }` iterates the dictionary's values and calls `.free` on each. If the granular chain is alive, tear it down too.
+**Lines 1165-1172**: first bump both load-generation dictionaries, so any sample load still reading from disk is cancelled and releases its buffer instead of installing onto freed buses. Then free every voice instance. `.do { |inst| inst.free }` iterates the dictionary's values and calls `.free` on each. If the granular chain is alive, tear it down too.
 
 ```supercollider
         bufferCache.do { |buf|
@@ -1276,7 +1476,7 @@ These are called from the Lua panic handler (the K1 panic flow, or explicit para
         };
 ```
 
-**Lines 910-912**: free every cached buffer. The guard against `\loading` prevents trying to free the sentinel (which would error — symbols don't have `.free`). The `buf.notNil` is belt-and-suspenders.
+**Lines 1177-1180**: free every cached buffer. The guard against `\loading` prevents trying to free the sentinel (which would error — symbols don't have `.free`). The `buf.notNil` is belt-and-suspenders.
 
 This was added during development. Without it, every script reload leaked the cached buffers on the SC server. Reloads would slowly exhaust server memory until SC restart.
 
@@ -1296,7 +1496,7 @@ This was added during development. Without it, every script reload leaked the ca
 }
 ```
 
-**Lines 913-925**: free the master FX synths, groups, and buses. The closing `}` ends the class.
+**Lines 1181-1196**: free the master FX synths, groups, and buses. The closing `}` ends the class.
 
 `★ Insight ─────────────────────────────────────`
 **Order of free matters when objects depend on each other.** Voice instances are freed first because they might be in the middle of triggering synths in the voice subgroups; freeing the subgroups out from under live synths could orphan node references. Master FX synths are freed before their group (otherwise the group.free would orphan them). Groups are freed before buses (the synths in the groups might write to the buses on a final block). Following this dependency-aware order prevents stray `Node X not found` errors.
@@ -1306,13 +1506,13 @@ This was added during development. Without it, every script reload leaked the ca
 
 ## Summary
 
-`Lied.sc` is 925 lines of dense SC code, but the patterns it uses repeat throughout. Reading the file with the architectural context from earlier chapters in mind:
+`Lied.sc` is about 1,180 lines of dense SC code, but the patterns it uses repeat throughout. Reading the file with the architectural context from earlier chapters in mind:
 
 - **Bus + group architecture** sets up the audio routing fabric (sections 4, 7, 11).
 - **SynthDefs** (sections 5, 6) define the DSP graphs.
 - **Lazy granular chain alloc** (section 10) is the most novel construction in the file.
-- **Voice instance lifecycle methods** (sections 13-16) follow a consistent pattern across TriSin / Ringer / Sampler / OneShot.
-- **Buffer cache with `\loading` sentinel** (section 15) handles file dedup safely.
+- **Voice instance lifecycle methods** (sections 13-16) follow a consistent pattern across Sine / TriSin / Ringer / Sampler / OneShot (Sampler and OneShot share the generation counters and carry-over).
+- **Shared sample-buffer cache** (`acquireBuffer` / `releaseBuffer` with the `\loading` sentinel, 2-channel buffers from `readStereoBuffer`) handles file dedup safely for both samplers and one-shots; `bumpGen` makes overlapping loads safe.
 - **Pending-params pattern** appears in every voice and in the granular chain — same idea applied to each.
 - **`free`** (section 18) is comprehensive and dependency-aware.
 

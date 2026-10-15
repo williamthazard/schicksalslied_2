@@ -1,8 +1,10 @@
 # Chapter 13 — `lib/voice_params.lua`
 
-The per-voice / per-cell parameter declaration module. **1,064 source lines** — the largest Lua file in the project. This is where the user-facing params menu structure gets defined, one block helper at a time.
+The per-voice / per-cell parameter declaration module. **1,328 source lines** — the largest Lua file in the project. This is where the user-facing params menu structure gets defined, one block helper at a time.
 
 The file is mostly **block helpers**: functions that declare 9-90 params each, called from `schicksalslied.lua:add_params()` in a loop. The patterns repeat heavily, so this chapter establishes each pattern once and then summarizes repeated instances. Reading top-to-bottom, you'll see: how a per-slot sampler block is built (the canonical pattern), how it gets specialized for one-shots, how row-2 voice cells extend the pattern with role-aware dispatch, how dynamic visibility hides irrelevant params based on mode selection, how option-type Timing params replace continuous controlspecs for musical-grid timing, how the `_G.GlobalSequencer` / `_G.GlobalRoles` cross-include workaround appears in practice, how the action-wrapper pattern extends Norns's built-in clock_tempo action, and how the per-cell string assignment param makes the script fully gridless-capable.
+
+(The `Lines N-M` notes in this chapter were written against an earlier, shorter revision and are approximate; search the source for the quoted code.)
 
 This chapter assumes chapter 09's coverage of params (cross-include identity in particular), chapter 11's value-mode and Timing distinction, and chapter 12's `cell_id` and role plumbing.
 
@@ -244,7 +246,7 @@ The choice of which params to randomize is editorial: amp, cutoff, resonance, pa
 
 Structurally parallel to `add_sampler_block` but with these differences:
 
-- **No trigger_col/row math**: one-shots live at row 8 col `slot` (slot 1..13 = col 1..13).
+- **No trigger_col/row math**: one-shots live at row 8 col `slot` (slot 1..12 = col 1..12).
 - **State action** is simpler:
   ```lua
   action = function(idx)
@@ -282,6 +284,95 @@ The only meaningful difference: the polyphony action uses `string.format("%d_%d"
 **Adding a new one-shot param** is just an `add_oneshot_block` edit. Adding the same param to samplers means duplicating into `add_sampler_block`. The duplication is intentional — the alternative would be more complex.
 `─────────────────────────────────────────────────`
 
+## One-shot source, folders and loading
+
+Each one-shot slot has two extra param helpers covering where its audio comes from and how hits are chosen and accented. `add_oneshot_source_param(slot)` adds just the `source` option and is called **first** in the slot (before the `file` param in `schicksalslied.lua`); `add_oneshot_folder_and_accent_params(slot)` is called after the `file` param and adds the rest:
+
+```lua
+    params:add{
+        type = 'option',
+        id = p .. 'source',
+        name = 'one-shot ' .. slot .. ' source',
+        options = { 'file', 'folder' },
+        default = 1,
+        action = function(idx)
+            VoiceParams._update_oneshot_visibility(slot)
+            VoiceParams.load_selected_oneshot(slot)
+        end,
+    }
+
+    -- Pick any file inside the folder you want; the whole folder loads.
+    params:add{
+        type = 'file',
+        id = p .. 'folder',
+        name = 'one-shot ' .. slot .. ' folder',
+        action = function(_)
+            if params:get(p .. 'source') == 2 then
+                VoiceParams.load_selected_oneshot(slot)
+            end
+        end,
+    }
+```
+
+**Why `source` goes first.** Two things depend on the order:
+
+- **Menu cursor.** Switching `source` to `folder` hides `file` and shows `folder`. With `source` second, hiding `file` moved `source` up a row and the cursor ended up on `folder`, which looked like the first two params swapping places. With `source` first, its row never moves.
+- **PSET read order.** PSET recall restores params in menu order, so `source` is applied before `file` and `folder`; only the selected side then loads, instead of both loading and the last one winning.
+
+Besides `source` and `folder`, the second helper adds `sample_select` (`seq` / `random` / `lied`), `accent_mode` (`off` / `pattern` / `lied`), `accent_length` (1-8), eight `accent_step_N` toggles, `accent_boost` (default 1.6x) and `accent_unaccent` (default 0.7x). `_update_oneshot_visibility` shows only the params relevant to the chosen source and accent mode (the accent steps shown track `accent_length`).
+
+**`source` is authoritative.** The slot has both a `file` param (defined in `schicksalslied.lua`, chapter 19) and a `folder` param, but only the one `source` selects ever reaches the engine:
+
+- Changing `source` loads the newly selected one right away (`load_selected_oneshot`).
+- The `folder` action only loads when `source == 2`; the `file` action (chapter 19) returns early unless `source == 1`.
+- The `folder` param deliberately has **no `path =`**. A norns `file` param treats `path` as its initial *value*, not just the browser's start directory, so giving it one made `params:bang()` at boot "load" that directory into all twelve slots. Without it the param starts at `'-'` like the other file params.
+
+To load a folder, the user picks **any file inside it** with the file browser; `load_selected_oneshot` takes the directory part of the picked path (`picked:match('(.*/)')`) and calls `load_oneshot_folder`.
+
+```lua
+function VoiceParams.claim_oneshot_source(slot, kind, key, count)
+    local R = _G.GlobalRoles or Roles
+    local cur = R.oneshot_sources[slot]
+    if cur and cur.kind == kind and cur.key == key then return false end
+    R.oneshot_sources[slot] = { kind = kind, key = key, count = count }
+    return true
+end
+
+function VoiceParams.clear_oneshot(slot)
+    local R = _G.GlobalRoles or Roles
+    -- Every load claims the slot first, so no claim means SC holds nothing
+    -- (and has nothing in flight): skip the redundant clear at boot/bang.
+    if R.oneshot_sources[slot] == nil then return end
+    R.oneshot_sources[slot] = nil
+    engine.oneshot_clear(slot)
+end
+```
+
+`Roles.oneshot_sources[slot] = { kind, key, count }` records what SC holds for each slot (`kind` is `'file'` or `'folder'`, `key` the path or directory, `count` the number of samples). It lives on the canonical `_G.GlobalRoles` table, which the dispatcher in chapter 12 reads. `claim_oneshot_source` **dedupes**: it returns false when the slot already holds that same file or directory, so repeat bangs (`params:bang()`, PSET recall, E3 stepping over files of one folder) don't reload it. `clear_oneshot` returns early when `oneshot_sources[slot]` is nil. Every load claims the slot first, so no claim means SC holds nothing (and has nothing in flight), and the clear would be redundant. This removes the pointless `oneshot_clear` calls at boot and on `params:bang()`. Otherwise it forgets the record and sends `engine.oneshot_clear`.
+
+```lua
+local AUDIO_EXTS = { wav = true, aif = true, aiff = true, flac = true }
+local FOLDER_MAX_FILES = 128
+local FOLDER_MAX_SEC = 600
+local FOLDER_MAX_LIST_BYTES = 16000
+
+function VoiceParams.load_oneshot_folder(slot, dir)
+    -- ... empty dir -> clear; same dir already loaded -> return ...
+    local names = {}
+    for _, fname in ipairs(util.scandir(dir) or {}) do
+        local ext = fname:match('%.([^./]+)$')
+        if ext and AUDIO_EXTS[ext:lower()] then table.insert(names, fname) end
+    end
+    table.sort(names)
+    -- ... walk names: audio.file_info readability, 600 s total, 128 files, 16000-byte list ...
+    VoiceParams.claim_oneshot_source(slot, 'folder', dir, #files)
+    engine.oneshot_load_files(slot, table.concat(files, '\n'))
+    VoiceParams.reapply_oneshot(slot)
+end
+```
+
+**Lua is the source of truth for a folder's contents.** `load_oneshot_folder` scans the directory (`util.scandir`), keeps files with an audio extension, **sorts** them, and drops anything unreadable (`audio.file_info` returns nothing) or over budget: at most **128 files**, at most **600 seconds of audio in total** (the same cap as one max-length sample, so a folder can't use more RAM than a single file could), and at most 16,000 bytes of path list (the list travels as one OSC string). It then records the source and sends SC the exact list as one **newline-separated string** with `engine.oneshot_load_files(slot, ...)`. Because Lua built the list, the `count` the dispatcher uses for `sample select` matches the number of buffers SC loaded, and file order matches buffer order. An empty folder clears the slot instead of loading.
+
 ## Randomize helpers for one-shots and granular
 
 ```lua
@@ -301,14 +392,14 @@ end
 
 ## The big one: `add_row2_cell_block` — role-aware per-cell params
 
-The largest function in the file. Declares 48+ params per row-2 cell, covering:
+The largest function in the file. Declares 50+ params per row-2 cell, covering:
 
 1. Role selector (option).
 2. State toggle (option).
 3. Cell string (delegates to `add_cell_string_block`).
 4. Seq mode block (delegates to `add_cell_seq_mode_block`, 15 params).
-5. Shared params (amp, amp_slew, pan, pan_slew, polyphony, 4 sends, pitch_offset).
-6. TriSin-only params (16: fm ratios, fm index/iscale, envelopes, cutoff, etc.).
+5. Shared params (amp, amp_slew, pan, pan_slew, polyphony, 4 sends, pitch_offset, hz_offset).
+6. TriSin params (16: fm ratios, fm index/iscale, envelopes, cutoff, etc.). The volume-envelope params and `freq_slew` are also honored by the Sine role.
 7. Ringer-only param (decay).
 8. MIDI-only param (midi_channel).
 9. Randomize trigger.
@@ -317,7 +408,7 @@ The largest function in the file. Declares 48+ params per row-2 cell, covering:
 
 ```lua
 local ROLE_NAMES = {
-    'TriSin', 'Ringer', 'crow 1+2', 'crow 3+4',
+    'Sine', 'TriSin', 'Ringer', 'crow 1+2', 'crow 3+4',
     'JF', 'JF run', 'JF quantize',
     'w/syn', 'w/del', 'w/tape looper', 'MIDI',
 }
@@ -335,6 +426,7 @@ function VoiceParams.add_row2_cell_block(x)
         action = function(role_idx)
             local role = ROLE_NAMES[role_idx]
             local R = _G.GlobalRoles or Roles
+            local prev_role = R.cell_role[x]
             R.cell_role[x] = role
             local prev_alloc = R.allocated[cell_id]
             if prev_alloc and prev_alloc ~= role then
@@ -342,20 +434,26 @@ function VoiceParams.add_row2_cell_block(x)
                     engine.trisin_free(cell_id)
                 elseif prev_alloc == 'Ringer' then
                     engine.ringer_free(cell_id)
+                elseif prev_alloc == 'Sine' then
+                    engine.sine_free(cell_id)
                 end
                 R.allocated[cell_id] = nil
             end
             VoiceParams._update_row2_visibility(x, role)
+            -- The new role's SC voice starts at SynthDef defaults; push this
+            -- cell's current values (SC caches them until the voice allocates).
+            if role ~= prev_role then VoiceParams.reapply_row2_cell(x) end
         end,
     }
 ```
 
-**Lines 261-296**: the role param. `ROLE_NAMES` is the canonical list mirroring `Roles.ENUM` (chapter 08).
+**Lines 261-296**: the role param. `ROLE_NAMES` is the canonical list mirroring `Roles.ENUM` (chapter 12). Sine is first, which is also the default for every cell.
 
-The action does three things:
+The action does four things:
 1. **Update `R.cell_role[x]`** with the new role string. (Note `R = _G.GlobalRoles or Roles` — the cross-include workaround.)
-2. **Free any previously-allocated SC voice** for this cell, if the previous role was TriSin/Ringer AND the new role differs.
+2. **Free any previously-allocated SC voice** for this cell, if the previous role was Sine/TriSin/Ringer AND the new role differs.
 3. **Update param visibility** to show role-relevant params and hide irrelevant ones.
+4. **Re-push this cell's values to the new role's voice** with `reapply_row2_cell(x)`, but only when the role actually changed (`prev_role ~= role`). A fresh voice is created with SynthDef defaults, and the cell's `*_set_param` actions route by role, so without this step the params the user had already dialed in (amp, sends, hz offset, ...) would never reach the new voice. See the re-firing section below.
 
 The "free previous" step matters: if cell 5 was TriSin (alloc'd a TriSin instance) and the user changes role to crow 1+2 (no SC instance needed), we should free the now-unused TriSin instance to avoid keeping dead SC voice nodes around.
 
@@ -412,7 +510,7 @@ The "free previous" step matters: if cell 5 was TriSin (alloc'd a TriSin instanc
     -- ... [4 send levels: dry, reverb, delay, granular] ...
 ```
 
-**Lines 320-386**: shared params (amp, amp_slew, pan, pan_slew, polyphony, 4 sends). The action of each amp/pan/pan_slew/sends call dispatches via `VoiceParams._set_cell_param(x, key, v)`, which routes to the active role's setParam (defined below). Polyphony writes directly to `_G.GlobalRoles.polyphony`.
+**Lines 320-386**: shared params (amp, amp_slew, pan, pan_slew, polyphony, 4 sends; plus `hz_offset` after the pitch offset). The action of each amp/pan/pan_slew/sends call dispatches via `VoiceParams._set_cell_param(x, key, v)`, which routes to the active role's setParam (defined below). Polyphony writes directly to `_G.GlobalRoles.polyphony`.
 
 ### Pitch offset
 
@@ -464,7 +562,7 @@ So the user sees `'+12 st (+1 oct)'` or `'-7 st (-P5)'` instead of just a number
     --      cutoff, cutoff_env, resonance, freq_slew] ...
 ```
 
-**Lines 407-518**: 16 TriSin-specific params. Each action calls `VoiceParams._set_trisin_only(x, sc_key, v)`, which writes to SC ONLY IF the cell's current role is TriSin (the function checks; we'll see it below). This makes the params safe to define for all cells — even if the cell is currently set to Ringer, writes here are silently dropped.
+**Lines 407-518**: 16 TriSin-specific params (the envelope and `freq_slew` ones are also routed to Sine voices by `_set_trisin_only`). Each action calls `VoiceParams._set_trisin_only(x, sc_key, v)`, which writes to SC ONLY IF the cell's current role is TriSin (the function checks; we'll see it below). This makes the params safe to define for all cells — even if the cell is currently set to Ringer, writes here are silently dropped.
 
 The param names map to TriSin SynthDef args:
 - `fm_carrier_ratio` → SC arg `cRatio`
@@ -527,17 +625,17 @@ end
 
 ```lua
 function VoiceParams._default_role_index(x)
-    local role_name = Roles.ROW_2_DEFAULTS[x] or 'TriSin'
+    local role_name = Roles.ROW_2_DEFAULTS[x] or 'Sine'
     for i, name in ipairs(ROLE_NAMES) do
         if name == role_name then return i end
     end
-    return 1
+    return 1  -- Sine
 end
 ```
 
 **Lines 550-556**: convert a column's default role name (from `Roles.ROW_2_DEFAULTS[x]`) to its index in `ROLE_NAMES`. Used by the role param's `default` field.
 
-The lookup is O(N) but N is small (11 roles) and this only runs at init.
+The lookup is O(N) but N is small (12 roles) and this only runs at init.
 
 ```lua
 function VoiceParams._set_cell_param(x, param_key, val)
@@ -547,6 +645,8 @@ function VoiceParams._set_cell_param(x, param_key, val)
         engine.trisin_set_param(cell_id, param_key, val)
     elseif role == 'Ringer' then
         engine.ringer_set_param(cell_id, param_key, val)
+    elseif role == 'Sine' then
+        engine.sine_set_param(cell_id, param_key, val)
     end
 end
 
@@ -555,6 +655,8 @@ function VoiceParams._set_trisin_only(x, param_key, val)
     local role = ROLE_NAMES[params:get('cell_' .. x .. '_2_role')]
     if role == 'TriSin' then
         engine.trisin_set_param(cell_id, param_key, val)
+    elseif role == 'Sine' then
+        engine.sine_set_param(cell_id, param_key, val)
     end
 end
 
@@ -569,8 +671,8 @@ end
 
 **Lines 560-584**: three role-routing helpers.
 
-- **`_set_cell_param`**: dispatches to either TriSin or Ringer based on current role. Used for shared params (amp, pan, etc.) that BOTH classes have.
-- **`_set_trisin_only`**: writes only if current role is TriSin. Used for TriSin-specific params.
+- **`_set_cell_param`**: dispatches to the Sine, TriSin or Ringer voice based on current role. Used for shared params (amp, pan, hz_offset, etc.) that all three classes have.
+- **`_set_trisin_only`**: writes if the current role is TriSin, or Sine (Sine shares TriSin's volume envelope and `freq_slew` arguments; FM-only keys sent to a Sine voice are simply ignored by its SynthDef). Used for TriSin-style params.
 - **`_set_ringer_only`**: writes only if current role is Ringer. Used for Ringer-specific params.
 
 Crow/JF/w/* roles have no SC voice — the role check filters out writes for those roles entirely. Setting a TriSin-only param while a cell is in crow mode is a no-op (silently).
@@ -587,14 +689,16 @@ Crow/JF/w/* roles have no SC voice — the role check filters out writes for tho
 function VoiceParams._update_row2_visibility(x, role)
     local trisin_only = {
         'fm_carrier_ratio', 'fm_modulator_ratio', 'fm_index', 'fm_iscale',
-        'attack', 'release', 'attack_curve', 'release_curve',
         'fm_env_attack', 'fm_env_release', 'fm_env_attack_curve', 'fm_env_release_curve',
-        'cutoff', 'cutoff_env', 'resonance', 'freq_slew',
+        'cutoff', 'cutoff_env', 'resonance',
+    }
+    local envelope_and_slew = {
+        'attack', 'release', 'attack_curve', 'release_curve', 'freq_slew',
     }
     local ringer_only = { 'decay' }
     local midi_only = { 'midi_channel' }
     local shared = { 'amp', 'amp_slew', 'pan', 'pan_slew', 'polyphony',
-                     'dry_send', 'reverb_send', 'delay_send', 'granular_send' }
+                     'dry_send', 'reverb_send', 'delay_send', 'granular_send', 'hz_offset' }
 
     local prefix = 'cell_' .. x .. '_2_'
     local function show_or_hide(list, show)
@@ -607,7 +711,9 @@ function VoiceParams._update_row2_visibility(x, role)
         end
     end
 
-    show_or_hide(shared, role == 'TriSin' or role == 'Ringer')
+    -- Shared params apply to all SC voices (TriSin / Ringer / Sine)
+    show_or_hide(shared, role == 'TriSin' or role == 'Ringer' or role == 'Sine')
+    show_or_hide(envelope_and_slew, role == 'TriSin' or role == 'Sine')
     show_or_hide(trisin_only, role == 'TriSin')
     show_or_hide(ringer_only, role == 'Ringer')
     show_or_hide(midi_only, role == 'MIDI')
@@ -625,14 +731,16 @@ end
 
 **Lines 586-628**: dynamic visibility for row-2 params based on the current role.
 
-Four lists of params:
-- `trisin_only` (16 params): TriSin-specific.
+Five lists of params:
+- `trisin_only` (11 params): FM, FM envelope, and filter params, TriSin-specific.
+- `envelope_and_slew` (5 params): volume attack/release (+ curves) and `freq_slew`, shared by TriSin and Sine.
 - `ringer_only` (1 param): Ringer-specific.
 - `midi_only` (1 param): MIDI-specific.
-- `shared` (9 params): TriSin AND Ringer.
+- `shared` (10 params): all three SC voices (amp, amp_slew, pan, pan_slew, polyphony, 4 sends, hz_offset).
 
 The visibility logic:
-- Shared params visible iff role is TriSin or Ringer (the only roles with SC voices).
+- Shared params visible iff role is Sine, TriSin or Ringer (the only roles with SC voices).
+- Envelope/slew params iff role is TriSin or Sine.
 - TriSin-only iff role is TriSin.
 - Ringer-only iff role is Ringer.
 - MIDI-only iff role is MIDI.
@@ -654,11 +762,14 @@ function VoiceParams.randomize_row2_cell(x)
         params:set(prefix .. 'resonance', math.random(50, 350) / 100)
     elseif role == 'Ringer' then
         params:set(prefix .. 'decay', math.random(50, 1500) / 100)
+    elseif role == 'Sine' then
+        params:set(prefix .. 'attack', math.random(1, 100) / 100)
+        params:set(prefix .. 'release', math.random(10, 200) / 100)
     end
 end
 ```
 
-**Lines 631-643**: role-aware randomize. Always randomizes amp + pan. If role is TriSin, also randomizes FM index, cutoff, resonance. If Ringer, randomizes decay.
+**Lines 631-643**: role-aware randomize. Always randomizes amp + pan. If role is TriSin, also randomizes FM index, cutoff, resonance. If Ringer, randomizes decay. If Sine, randomizes the attack and release times.
 
 This is more useful than blindly randomizing every param because cell parameters that don't apply to the current role wouldn't audibly change anything.
 
@@ -913,41 +1024,52 @@ end
 
 The defaults are computed inline: rate mode defaults to 1 (native rate), 0.5 (half-speed for random min), 2 (double-speed for random max); non-rate defaults to the midpoint of the range.
 
-## Re-firing param actions after a file load (`reapply_sampler` / `reapply_oneshot`)
+## Re-firing param actions (`reapply_sampler` / `reapply_oneshot` / `reapply_row2_cell`)
 
 ```lua
 local SC_BOUND_KEYS = {
     'amp', 'amp_slew', 'cutoff', 'resonance', 'pan', 'pan_slew',
     'dry_send', 'reverb_send', 'delay_send', 'granular_send',
 }
-function VoiceParams.reapply_sampler(slot)
-    for _, key in ipairs(SC_BOUND_KEYS) do
-        local pid = 'sampler_' .. slot .. '_' .. key
-        if params.lookup[pid] then params:set(pid, params:get(pid)) end
+local function rebang(prefix, keys)
+    for _, key in ipairs(keys) do
+        local pid = prefix .. key
+        if params.lookup[pid] then params:lookup_param(pid):bang() end
     end
 end
+function VoiceParams.reapply_sampler(slot)
+    rebang('sampler_' .. slot .. '_', SC_BOUND_KEYS)
+end
 function VoiceParams.reapply_oneshot(slot)
-    for _, key in ipairs(SC_BOUND_KEYS) do
-        local pid = 'oneshot_' .. slot .. '_' .. key
-        if params.lookup[pid] then params:set(pid, params:get(pid)) end
-    end
+    rebang('oneshot_' .. slot .. '_', SC_BOUND_KEYS)
+end
+
+local ROW2_SC_KEYS = {
+    'amp', 'amp_slew', 'pan', 'pan_slew', 'dry_send', 'reverb_send',
+    'delay_send', 'granular_send', 'hz_offset',
+    'fm_carrier_ratio', 'fm_modulator_ratio', 'fm_index', 'fm_iscale',
+    'attack', 'release', 'attack_curve', 'release_curve',
+    'fm_env_attack', 'fm_env_release', 'fm_env_attack_curve', 'fm_env_release_curve',
+    'cutoff', 'cutoff_env', 'resonance', 'freq_slew', 'decay',
+}
+function VoiceParams.reapply_row2_cell(x)
+    rebang('cell_' .. x .. '_2_', ROW2_SC_KEYS)
 end
 ```
 
-**Lines 874-889**: re-fire param actions after a file load. The comment explains the rationale: `loadSampler`/`loadOneShot` create a fresh SC instance with SynthDef defaults. Without re-firing the param actions, the Lua-side current values would be out of sync with SC.
+**Lines 874-889 (approx.)**: re-fire param actions so their `engine.*_set_param` calls push the current Lua values to a freshly-created SC instance. Two situations call them:
 
-The trick: `params:set(pid, params:get(pid))` writes the param to its OWN current value, which fires the action without changing anything. The action's `engine.sampler_set_param(slot, key, v)` lands in SC's pending-params cache (the instance is still mid-fork allocation; the kernel applies pending params at the end of the alloc fork).
+- **After a sampler or one-shot load**: `loadSampler`/`loadOneShot` create a fresh SC instance with SynthDef defaults. Without re-firing, the Lua-side values would silently diverge from SC. (For one-shots the kernel also carries the previous instance's live params across a reload; the re-fire covers the first load and any param that arrived mid-load.)
+- **After a row-2 role change** (`reapply_row2_cell`, called from the role action only when the role actually changed): the new voice starts at defaults, and every row-2 SC-bound action routes by the cell's *current* role, so banging them all only reaches the active voice. `ROW2_SC_KEYS` lists every row-2 param whose action forwards to SC (shared, FM, envelope, filter and decay).
 
-Called from the file param's action, immediately after `engine.sampler_load(slot, path)` / `engine.oneshot_load(slot, path)`.
+The trick is **`params:lookup_param(pid):bang()`**: `bang()` runs the param's action with its current value. The action's `engine.sampler_set_param(slot, key, v)` lands in SC's pending-params cache if the instance is still mid-fork allocation; the kernel applies pending params at the end of the alloc fork.
 
 `★ Insight ─────────────────────────────────────`
-**`params:set(pid, params:get(pid))` is the "re-fire action" idiom in Norns Lua.** Used anywhere you need to trigger a param's side effect without changing the value. Other places this appears in the script:
-- `for x = 1, 16 do params:set('cell_X_2_role', params:get(...)) end` to force visibility refresh at init.
-- Same for seq_mode and value_mode init-time refreshes.
+**Use `:bang()`, not `params:set(pid, params:get(pid))`, to re-fire an action.** Setting a param to its own current value is a **no-op** in norns: `Control:set` only updates (and fires the action) when the clamped value differs from the stored one. An earlier version of these helpers used the set-to-self idiom, so the re-fire silently did nothing and a reloaded voice kept its SynthDef defaults. `params:lookup_param(id):bang()` always calls the action.
 
-**Why iterate `SC_BOUND_KEYS` instead of all params?** Because not every sampler/one-shot param needs re-firing — only the ones whose action sends an OSC command to SC. Sequencer-related params (state, polyphony, randomize trigger) don't need re-fire; they're Lua-side only. The whitelist avoids re-firing actions that wouldn't help.
+**Why iterate whitelists (`SC_BOUND_KEYS`, `ROW2_SC_KEYS`) instead of all params?** Because only some params' actions send an OSC command to SC. Sequencer-related params (state, polyphony, randomize trigger) are Lua-side only, so re-firing them wouldn't help.
 
-**The `params.lookup[pid]` defensive check** handles the case where some sampler params don't exist (e.g., if we somehow added a SC_BOUND_KEYS entry that doesn't have a corresponding param). Skip silently.
+**The `params.lookup[pid]` defensive check** skips ids that don't exist (for example sampler/one-shot params the whitelist names but a slot doesn't define). Skip silently.
 `─────────────────────────────────────────────────`
 
 ## The cell string assignment surface (gridless operation)
@@ -1034,12 +1156,12 @@ local STRING_CELLS = (function()
     for y = 4, 6, 2 do
         for x = 1, 16 do t[#t + 1] = { x, y } end
     end
-    for x = 1, 13 do t[#t + 1] = { x, 8 } end
+    for x = 1, 12 do t[#t + 1] = { x, 8 } end   -- row 8 cols 1-12
     return t
 end)()
 ```
 
-**Lines 971-979**: build the list of cells that have string params. Row 2 cols 1-16, row 4 cols 1-16, row 6 cols 1-16, row 8 cols 1-13. Total: 16 + 16 + 16 + 13 = 61 cells.
+**Lines 971-979**: build the list of cells that have string params. Row 2 cols 1-16, row 4 cols 1-16, row 6 cols 1-16, row 8 cols 1-12. Total: 16 + 16 + 16 + 12 = 60 cells.
 
 The immediately-invoked function pattern (IIFE) `(function() ... end)()` constructs the table at load time. After this, `STRING_CELLS` is a fixed array.
 

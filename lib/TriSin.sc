@@ -9,79 +9,86 @@ TriSin {
 
     *initClass {
         voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
-        StartUp.add {
-            var s = Server.default;
+    }
 
-            s.waitForBoot {
+    // Added by Lied.init once Crone has booted the server — never from a
+    // StartUp hook, which runs at every sclang start and could boot scsynth
+    // before Crone had set it up.
+    *addSynthDefs {
+        SynthDef("TriSin", {
+            arg t_gate = 0,
+                mRatio,
+                cRatio,
+                index,
+                iScale,
+                freq,
+                hz_offset = 0,
+                cutoff,
+                resonance,
+                cutoff_env,
+                attack,
+                release,
+                iattack,
+                irelease,
+                cAtk,
+                cRel,
+                ciAtk,
+                ciRel,
+                amp,
+                pan,
+                freq_slew,
+                amp_slew,
+                pan_slew,
+                dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
+                dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 
-                SynthDef("TriSin", {
-                    arg t_gate = 0,
-                        mRatio,
-                        cRatio,
-                        index,
-                        iScale,
-                        freq,
-                        cutoff,
-                        resonance,
-                        cutoff_env,
-                        attack,
-                        release,
-                        iattack,
-                        irelease,
-                        cAtk,
-                        cRel,
-                        ciAtk,
-                        ciRel,
-                        amp,
-                        pan,
-                        freq_slew,
-                        amp_slew,
-                        pan_slew,
-                        dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
-                        dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
+            var car, mod, envelope, iEnv, filter, signal, ampSig;
+            var slewed_freq = max(0.1, freq + hz_offset).lag3(freq_slew);
 
-                    var car, mod, envelope, iEnv, filter, signal, ampSig;
-                    var slewed_freq = freq.lag3(freq_slew);
+            envelope = EnvGen.kr(
+                envelope: Env(
+                    [0, 1, 0],
+                    times: [attack, release],
+                    curve: [cAtk, cRel]),
+                gate: t_gate
+            );
 
-                    envelope = EnvGen.kr(
-                        envelope: Env(
-                            [0, 1, 0],
-                            times: [attack, release],
-                            curve: [cAtk, cRel]),
-                        gate: t_gate
-                    );
+            // Unity-shaped index envelope (0 → 1 → 0), scaled AFTER EnvGen.
+            // EnvGen latches each segment's target level when the segment
+            // starts, so levels [index, index*iScale, index] froze FM depth
+            // at note-on; mapping here keeps the same curve per note while
+            // index/iScale knob + LFO moves reach sounding notes. The short
+            // lag3 smooths 0.01-step knob/LFO updates (no zipper on depth).
+            iEnv = EnvGen.kr(
+                Env(
+                    [0, 1, 0],
+                    times: [iattack, irelease],
+                    curve: [ciAtk, ciRel]),
+                gate: t_gate
+            );
+            iEnv = index.lag3(0.05) * (1 + ((iScale.lag3(0.05) - 1) * iEnv));
 
-                    iEnv = EnvGen.kr(
-                        Env(
-                            [index, index * iScale, index],
-                            times: [iattack, irelease],
-                            curve: [ciAtk, ciRel]),
-                        gate: t_gate
-                    );
+            mod = SinOsc.ar(slewed_freq * mRatio, mul: slewed_freq * mRatio * iEnv);
+            car = LFTri.ar(slewed_freq * cRatio + mod) * envelope;
 
-                    mod = SinOsc.ar(slewed_freq * mRatio, mul: slewed_freq * mRatio * iEnv);
-                    car = LFTri.ar(slewed_freq * cRatio + mod) * envelope;
+            filter = MoogFF.ar(
+                in: car,
+                freq: Select.kr(cutoff_env > 0, [cutoff, cutoff * envelope]),
+                gain: resonance
+            );
 
-                    filter = MoogFF.ar(
-                        in: car,
-                        freq: Select.kr(cutoff_env > 0, [cutoff, cutoff * envelope]),
-                        gain: resonance
-                    );
+            signal = Pan2.ar(
+                filter,
+                pan.lag3(pan_slew)
+            );
 
-                    signal = Pan2.ar(
-                        filter,
-                        pan.lag3(pan_slew)
-                    );
-
-                    // Post-fader: amp scales all 4 sends
-                    ampSig = amp.lag3(amp_slew);
-                    Out.ar(dry_bus,    signal * ampSig * dry_send.lag3(0.05));
-                    Out.ar(reverb_bus, signal * ampSig * reverb_send.lag3(0.05));
-                    Out.ar(delay_bus,  signal * ampSig * delay_send.lag3(0.05));
-                    Out.ar(gran_bus,   signal * ampSig * granular_send.lag3(0.05));
-                }).add;
-            }
-        }
+            // Post-fader: amp scales all 4 sends
+            ampSig = amp.lag3(amp_slew);
+            Out.ar(dry_bus,    signal * ampSig * dry_send.lag3(0.05));
+            Out.ar(reverb_bus, signal * ampSig * reverb_send.lag3(0.05));
+            Out.ar(delay_bus,  signal * ampSig * delay_send.lag3(0.05));
+            Out.ar(gran_bus,   signal * ampSig * granular_send.lag3(0.05));
+        }).add;
     }
 
     *new { arg dryBusIdx, reverbBusIdx, delayBusIdx, granularBusIdx;
@@ -95,6 +102,7 @@ TriSin {
 
         globalParams = Dictionary.newFrom([
             \freq, 400,
+            \hz_offset, 0,
             \mRatio, 1,
             \cRatio, 1,
             \index, 1,

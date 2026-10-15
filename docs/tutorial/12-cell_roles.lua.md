@@ -1,8 +1,8 @@
 # Chapter 12 — `lib/cell_roles.lua`
 
-The role registry + dispatch table + lazy SC voice allocation. **346 source lines.** By the end of this chapter the chain from clock fire → role lookup → engine OSC call → audio is complete on the Lua side. The script can play sound.
+The role registry + dispatch table + lazy SC voice allocation. **435 source lines.** (Line numbers in the `Lines N-M` notes below are approximate for the current revision.) By the end of this chapter the chain from clock fire → role lookup → engine OSC call → audio is complete on the Lua side. The script can play sound.
 
-Chapter 11 ended with the sequencer firing `dispatch_fn(x, y)` 64 times per beat (more if there are fast cells). This chapter builds the `dispatch_fn` that gets called: a role enum (11 voice roles you can assign to a row-2 cell), a per-cell dispatch table mapping each role string to its byte-to-musical-value handler, the lazy SC voice allocation pattern (`ensure_allocated`), round-robin polyphony tracking, and the dispatch flow for sampler trigger/rate cells and one-shot cells.
+Chapter 11 ended with the sequencer firing `dispatch_fn(x, y)` 64 times per beat (more if there are fast cells). This chapter builds the `dispatch_fn` that gets called: a role enum (12 voice roles you can assign to a row-2 cell), a per-cell dispatch table mapping each role string to its byte-to-musical-value handler, the lazy SC voice allocation pattern (`ensure_allocated`), round-robin polyphony tracking, and the dispatch flow for sampler trigger/rate cells and one-shot cells.
 
 ## Header and imports
 
@@ -53,20 +53,30 @@ end
 **This is the script's only point where "byte → note" becomes "byte → scale-snapped note."** The byte math (`byte % 32 + 49`) produces an unquantized MIDI note; this function reshapes it. Same byte stream produces different musical material depending on scale.
 `─────────────────────────────────────────────────`
 
-## The 11 roles, the default per-column assignments
+## The 12 roles, the default per-column assignments
 
 ```lua
 Roles.ENUM = {
-    'TriSin', 'Ringer', 'crow 1+2', 'crow 3+4',
-    'JF', 'JF run', 'JF quantize',
-    'w/syn', 'w/del', 'w/tape looper', 'MIDI',
+    'Sine',
+    'TriSin',
+    'Ringer',
+    'crow 1+2',
+    'crow 3+4',
+    'JF',
+    'JF run',
+    'JF quantize',
+    'w/syn',
+    'w/del',
+    'w/tape looper',
+    'MIDI',
 }
 
+-- Default row-2 role per column: Sine everywhere
 Roles.ROW_2_DEFAULTS = {
-    'TriSin', 'TriSin', 'TriSin', 'TriSin',
-    'Ringer', 'Ringer', 'Ringer', 'Ringer',
-    'TriSin', 'TriSin', 'TriSin', 'TriSin',
-    'Ringer', 'Ringer', 'Ringer', 'Ringer',
+    'Sine', 'Sine', 'Sine', 'Sine',
+    'Sine', 'Sine', 'Sine', 'Sine',
+    'Sine', 'Sine', 'Sine', 'Sine',
+    'Sine', 'Sine', 'Sine', 'Sine',
 }
 
 Roles.cell_role = {}
@@ -75,18 +85,21 @@ function Roles.init()
     for x = 1, 16 do
         Roles.cell_role[x] = Roles.ROW_2_DEFAULTS[x]
     end
+    Roles.oneshot_cursors = {}
+    Roles.oneshot_accent_cursors = {}
+    Roles.oneshot_sources = {}
 end
 ```
 
-**Lines 35-65**: the canonical role list, per-column defaults, and the per-cell role state.
+**Lines 31-70**: the canonical role list, per-column defaults, and the per-cell role state.
 
-`Roles.ENUM` is **the source of truth** for available roles. Order matters — the params menu uses these as option indices. Adding a new role means: append to ENUM + add a matching entry in `dispatch_row_2`.
+`Roles.ENUM` is **the source of truth** for available roles. Order matters — the params menu uses these as option indices, and PSETs store the index. **Sine is first**, so every other role's index is one higher than it was before Sine existed: PSETs saved by 2.0 (which had no Sine) load their row-2 roles shifted by one. Adding a new role means: append to ENUM + add a matching entry in `dispatch_row_2`.
 
-`Roles.ROW_2_DEFAULTS` is the per-column default — alternating blocks of 4 TriSin / 4 Ringer. Mirrors the naherinlied default, gives the user a useful out-of-the-box setup.
+`Roles.ROW_2_DEFAULTS` is the per-column default — **Sine in all 16 cells**, the simplest voice, so a fresh script makes a clean tone out of the box. (Earlier builds alternated blocks of 4 TriSin / 4 Ringer.)
 
 `Roles.cell_role[x]` is the live state for column x's current role. Read by `Roles.dispatch` to look up the role; written by the `cell_X_2_role` param's action.
 
-`Roles.init()` populates the cell_role table from defaults. Called from `schicksalslied.lua:init()`.
+`Roles.init()` populates the cell_role table from defaults and resets the one-shot runtime state (`oneshot_cursors`, `oneshot_accent_cursors`, `oneshot_sources`; see the one-shot dispatcher below). Called from `schicksalslied.lua:init()`.
 
 ## The cell ID helper
 
@@ -114,6 +127,8 @@ function Roles.ensure_allocated(x, y)
             engine.trisin_free(cell_id)
         elseif prev == 'Ringer' then
             engine.ringer_free(cell_id)
+        elseif prev == 'Sine' then
+            engine.sine_free(cell_id)
         end
         Roles.allocated[cell_id] = nil
     end
@@ -122,6 +137,9 @@ function Roles.ensure_allocated(x, y)
         Roles.allocated[cell_id] = role
     elseif role == 'Ringer' then
         engine.ringer_alloc(cell_id)
+        Roles.allocated[cell_id] = role
+    elseif role == 'Sine' then
+        engine.sine_alloc(cell_id)
         Roles.allocated[cell_id] = role
     end
 end
@@ -133,7 +151,7 @@ The function is **idempotent** — calling it for an already-allocated cell does
 
 1. **Row-2 only**: return immediately if not row 2. Samplers/one-shots have their own allocation flow.
 2. **Already-correct case**: if the recorded allocation matches the current role, nothing to do.
-3. **Role-changed case**: free the previous SC voice (if it was TriSin or Ringer). Clear the allocated entry.
+3. **Role-changed case**: free the previous SC voice (if it was Sine, TriSin or Ringer). Clear the allocated entry.
 4. **Allocate fresh** for the current role, recording the role string in `Roles.allocated`.
 
 For crow / JF / w/* / MIDI roles, no SC instance is needed (those use crow/ii calls directly). The function intentionally has no `elseif` branches for them — falls through silently.
@@ -149,6 +167,8 @@ function Roles.free_all()
             engine.trisin_free(cell_id)
         elseif role == 'Ringer' then
             engine.ringer_free(cell_id)
+        elseif role == 'Sine' then
+            engine.sine_free(cell_id)
         end
     end
     Roles.allocated = {}
@@ -189,13 +209,29 @@ Roles.looper_running = {}
 - **`next_voice_key(cell_id, default_poly)`**: increment the cell's counter (mod polyphony) and return. `Roles.polyphony[cell_id] or default_poly or 4` — three-level fallback in case the polyphony param hasn't been set.
 - **`Roles.looper_running`**: per-cell flag for w/tape looper re-entry guard.
 
-## The 11 row-2 dispatchers
+## The 12 row-2 dispatchers
 
 ```lua
 Roles.dispatch_row_2 = {
 ```
 
-**Line 156**: open the dispatch table. The 11 role strings are keys; the functions are values.
+**Line 156**: open the dispatch table. The 12 role strings are keys; the functions are values.
+
+### Sine
+
+```lua
+    ['Sine'] = function(x, y, seq)
+        Roles.ensure_allocated(x, y)
+        local cell_id = Roles.cell_id(x, y)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local note = Roles.quantize_note(seq() % 32 + 49 + offset)
+        local freq = MusicUtil.note_num_to_freq(note)
+        local voice_key = next_voice_key(cell_id, 4)
+        engine.sine_trigger(cell_id, voice_key, freq)
+    end,
+```
+
+The default role. Identical to TriSin and Ringer apart from the engine command (`engine.sine_trigger`); the walkthrough below applies to all three.
 
 ### TriSin
 
@@ -425,11 +461,13 @@ local function dispatch_sampler_trigger(x, y, seq)
     else
         start_pos = pos_value
     end
+    local dur
     if dur_value == nil then
-        end_pos = start_pos + util.clamp(util.linlin(32, 126, 0.001, 0.1, seq()), 0.001, 0.1)
+        dur = util.linlin(32, 126, 0.001, 1.0, seq())
     else
-        end_pos = start_pos + dur_value
+        dur = dur_value
     end
+    end_pos = util.clamp(start_pos + dur, 0.001, 1.0)
     local rate_value = Roles.Sequencer.get_value(x + 1, y, 'rate')
     local rate
     if rate_value == nil then
@@ -445,8 +483,8 @@ end
 
 1. **Compute slot, cell_id, voice key**.
 2. **Read position value** from value_mode (defined in chapter 11). If nil (lied mode), derive from byte: `util.linlin(32, 126, 0, 0.9, seq())` maps a printable byte to a position in [0, 0.9].
-3. **Read duration value**. If nil, derive from byte: `util.linlin(32, 126, 0.001, 0.1, seq())` maps to [0.001, 0.1] (a small slice).
-4. **Compute end_pos** as start + duration. Capped via `util.clamp` to ensure validity.
+3. **Read duration value**. If nil, derive from byte: `util.linlin(32, 126, 0.001, 1.0, seq())` maps to [0.001, 1.0] of the file. Slices can now be as long as the whole file (an earlier build capped the duration at 0.1).
+4. **Compute end_pos** as start + duration, clamped to [0.001, 1.0] so the region never runs past the end of the buffer. Late start positions plus long durations therefore often just play to the end of the file.
 5. **Read rate** from the PAIRED rate cell (at `x + 1, y` — the rate cell is the even col to the right). If nil (lied mode), use 1 (the dispatch_sampler_rate at every tick will set the actual rate; this is just the trigger's rate hint).
 6. **Fire the engine command**.
 
@@ -473,27 +511,76 @@ end
 ## The one-shot dispatcher
 
 ```lua
+Roles.oneshot_cursors = {}
+Roles.oneshot_accent_cursors = {}
+-- What each one-shot slot actually holds in SC, written by voice_params'
+-- loaders: { kind = 'file' | 'folder', key = path_or_dir, count = n }.
+Roles.oneshot_sources = {}
+
 local function dispatch_oneshot_trigger(x, y, seq)
     local slot = x
     local cell_id = Roles.cell_id(x, y)
-    local voice_key = next_voice_key(cell_id, 1)
-    local rate_value = Roles.Sequencer.get_value(x, y, 'rate')
-    local rate
-    if rate_value == nil then
-        rate = seq() / 36
-    else
-        rate = rate_value
+    local poly = Roles.polyphony[cell_id] or 1
+    local voice_key = next_voice_key(cell_id, poly)
+    local p = 'oneshot_' .. slot .. '_'
+    local function opt(name, fallback)
+        return params.lookup[p .. name] and params:get(p .. name) or fallback
     end
-    engine.oneshot_trigger(slot, voice_key, rate)
+
+    local src = Roles.oneshot_sources[slot]
+    local count = (src and src.kind == 'folder') and src.count or 1
+    local sel_mode = opt('sample_select', 1)  -- 1 seq, 2 random, 3 lied
+    local acc_mode = opt('accent_mode', 1)    -- 1 off, 2 pattern, 3 lied
+    local rate_value = Roles.Sequencer.get_value(x, y, 'rate')
+
+    -- Every hit reads 3 characters (rate, sample, accent) whatever the modes
+    local rate_byte   = seq()
+    local sample_byte = seq()
+    local accent_byte = seq()
+
+    local rate = rate_value or (rate_byte / 36)
+
+    local sample_idx = 0
+    if count > 1 then
+        if sel_mode == 2 then
+            sample_idx = math.random(0, count - 1)
+        elseif sel_mode == 3 then
+            sample_idx = sample_byte % count
+        else
+            local cur = Roles.oneshot_cursors[slot] or 0
+            sample_idx = cur % count
+            Roles.oneshot_cursors[slot] = cur + 1
+        end
+    end
+
+    local amp_scale = 1.0
+    if acc_mode == 2 or acc_mode == 3 then
+        local accented
+        if acc_mode == 2 then
+            local len = opt('accent_length', 4)
+            local cur = Roles.oneshot_accent_cursors[slot] or 0
+            Roles.oneshot_accent_cursors[slot] = cur + 1
+            accented = (params:get(p .. 'accent_step_' .. ((cur % len) + 1)) == 2)
+        else
+            accented = (accent_byte >= 65 and accent_byte <= 90)  -- 'A'..'Z'
+        end
+        amp_scale = accented and opt('accent_boost', 1.6) or opt('accent_unaccent', 0.7)
+    end
+
+    engine.oneshot_trigger(slot, voice_key, rate, sample_idx, amp_scale)
 end
 ```
 
-**Lines 301-313**: one-shot trigger. Simpler than sampler:
+**Lines 324-389**: one-shot trigger. More involved than the sampler dispatcher, because a slot can hold a whole folder and can accent individual hits.
 
-- **`slot = x`**: one-shots are in row 8 cols 1-13, slot directly maps to col.
-- **Default polyphony 1**: one-shots typically don't need polyphony (percussive samples).
-- **Read rate or derive from byte**.
-- **Fire**.
+- **`slot = x`**: one-shots are in row 8 cols 1-12, slot directly maps to col.
+- **What's loaded comes from `Roles.oneshot_sources[slot]`**, a table the loaders in `voice_params.lua` fill in (`{kind, key, count}`). The dispatcher reads **this**, not the `source` param, so its sample selection always matches what is actually loaded in SC: if the user flips `source` to `folder` but nothing has loaded yet, `count` is still 1 and the trigger plays buffer 0.
+- **`sample select`** (only when `count > 1`): `seq` walks a per-slot cursor (`Roles.oneshot_cursors`) through the files in order, `random` picks any, `lied` uses `sample_byte % count`, so the cell's text chooses the file.
+- **`accent mode`**: `off` leaves `amp_scale` at 1; `pattern` steps a separate cursor (`oneshot_accent_cursors`) through up to 8 per-step accent toggles (`accent_length` steps); `lied` accents the hit when its byte is an uppercase letter (`A`-`Z`). An accented hit is multiplied by `accent_boost` (default 1.6), an unaccented one by `accent_unaccent` (default 0.7).
+- **Every hit reads exactly 3 characters** (rate, sample, accent), whatever the modes; characters for modes that are off are read and dropped. That fixed stride (plus the 2 characters the sequencer's clock reads in lied seq_mode) means switching `lied` accents or `lied` sample select never shifts which characters drive the rhythm, and "uppercase = accent" always tests the same position in the stride. The three reads are separate statements on purpose: Lua doesn't guarantee left-to-right evaluation of `local a, b, c = seq(), seq(), seq()`.
+- **Short or stride-aligned text**: the stream wraps, so a 1-character cell reads the same character for everything, and a 2-character cell alternates between two tick patterns. More generally the pattern repeats every `len / gcd(len, stride)` ticks — with the default lied seq_mode the stride is 5, so a 5- or 10-character line plays the same hit every tick.
+- **Polyphony** defaults to 1 for one-shots but follows the cell's polyphony table if set.
+- **Fire**: `engine.oneshot_trigger(slot, voice_key, rate, sample_idx, amp_scale)`, the five-argument form (`"iifif"`) from chapter 04.
 
 No position/duration — one-shots play the whole buffer through.
 
@@ -515,7 +602,7 @@ function Roles.dispatch(x, y)
             dispatch_sampler_rate(x, y, seq_fn)
         end
     elseif y == 8 then
-        if x <= 13 then
+        if x <= 12 then
             dispatch_oneshot_trigger(x, y, seq_fn)
         end
     end
@@ -529,15 +616,15 @@ end
 3. **Row-based dispatch**:
    - Row 2: look up role, dispatch to row_2 table.
    - Row 4/6: odd col → trigger; even col → rate.
-   - Row 8 cols 1-13: one-shot trigger.
-4. **Row 8 cols 14-16**: no-op (mic/granular toggles handled by their state-param actions).
+   - Row 8 cols 1-12: one-shot trigger.
+4. **Row 8 cols 13-16**: no-op. These are the granular freeze, mic-to-delay, granular-out and mic-monitor toggles, handled by their state-param actions (and, for col 16, the grid key handler) rather than per tick.
 
 ## Summary
 
 `cell_roles.lua` is the dispatch layer. Three roles for the file:
 
 - **The canonical role registry** (`Roles.ENUM`, `Roles.ROW_2_DEFAULTS`).
-- **Lazy SC voice allocation** for TriSin/Ringer cells.
+- **Lazy SC voice allocation** for Sine/TriSin/Ringer cells.
 - **The dispatch table** mapping role strings to byte→musical-value functions.
 
 To add a new row-2 role:

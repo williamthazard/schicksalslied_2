@@ -30,9 +30,10 @@ end
 -- ========================================================================
 -- ROLE ENUM (row 2 cells configurable; rows 4/6/8 are fixed)
 -- ========================================================================
--- 11 options per spec §3 (10 original + MIDI added in Sub-plan C).
--- Order matters — params menu uses these as indices.
+-- 12 options: Sine (2.x default) + spec §3's 10 + MIDI (Sub-plan C).
+-- Order matters — params menu uses these as indices (and PSETs store them).
 Roles.ENUM = {
+    'Sine',
     'TriSin',
     'Ringer',
     'crow 1+2',
@@ -46,12 +47,12 @@ Roles.ENUM = {
     'MIDI',
 }
 
--- Default row-2 role per column (spec §3: 4 TriSin → 4 Ringer → 4 TriSin → 4 Ringer)
+-- Default row-2 role per column: Sine everywhere
 Roles.ROW_2_DEFAULTS = {
-    'TriSin', 'TriSin', 'TriSin', 'TriSin',
-    'Ringer', 'Ringer', 'Ringer', 'Ringer',
-    'TriSin', 'TriSin', 'TriSin', 'TriSin',
-    'Ringer', 'Ringer', 'Ringer', 'Ringer',
+    'Sine', 'Sine', 'Sine', 'Sine',
+    'Sine', 'Sine', 'Sine', 'Sine',
+    'Sine', 'Sine', 'Sine', 'Sine',
+    'Sine', 'Sine', 'Sine', 'Sine',
 }
 
 -- Per-cell role (row 2 only). For other rows, role is implicit.
@@ -62,6 +63,9 @@ function Roles.init()
     for x = 1, 16 do
         Roles.cell_role[x] = Roles.ROW_2_DEFAULTS[x]
     end
+    Roles.oneshot_cursors = {}
+    Roles.oneshot_accent_cursors = {}
+    Roles.oneshot_sources = {}
 end
 
 -- ========================================================================
@@ -101,6 +105,8 @@ function Roles.ensure_allocated(x, y)
             engine.trisin_free(cell_id)
         elseif prev == 'Ringer' then
             engine.ringer_free(cell_id)
+        elseif prev == 'Sine' then
+            engine.sine_free(cell_id)
         end
         Roles.allocated[cell_id] = nil
     end
@@ -110,6 +116,9 @@ function Roles.ensure_allocated(x, y)
         Roles.allocated[cell_id] = role
     elseif role == 'Ringer' then
         engine.ringer_alloc(cell_id)
+        Roles.allocated[cell_id] = role
+    elseif role == 'Sine' then
+        engine.sine_alloc(cell_id)
         Roles.allocated[cell_id] = role
     end
     -- Crow roles and looper don't need SC instances — they speak crow/ii directly
@@ -122,6 +131,8 @@ function Roles.free_all()
             engine.trisin_free(cell_id)
         elseif role == 'Ringer' then
             engine.ringer_free(cell_id)
+        elseif role == 'Sine' then
+            engine.sine_free(cell_id)
         end
     end
     Roles.allocated = {}
@@ -173,6 +184,16 @@ Roles.dispatch_row_2 = {
         local freq = MusicUtil.note_num_to_freq(note)
         local voice_key = next_voice_key(cell_id, 4)
         engine.ringer_trigger(cell_id, voice_key, freq)
+    end,
+
+    ['Sine'] = function(x, y, seq)
+        Roles.ensure_allocated(x, y)
+        local cell_id = Roles.cell_id(x, y)
+        local offset = params:get('cell_' .. x .. '_2_pitch_offset') or 0
+        local note = Roles.quantize_note(seq() % 32 + 49 + offset)
+        local freq = MusicUtil.note_num_to_freq(note)
+        local voice_key = next_voice_key(cell_id, 4)
+        engine.sine_trigger(cell_id, voice_key, freq)
     end,
 
     ['crow 1+2'] = function(x, y, seq)
@@ -266,11 +287,13 @@ local function dispatch_sampler_trigger(x, y, seq)
     else
         start_pos = pos_value
     end
+    local dur
     if dur_value == nil then
-        end_pos = start_pos + util.clamp(util.linlin(32, 126, 0.001, 0.1, seq()), 0.001, 0.1)
+        dur = util.linlin(32, 126, 0.001, 1.0, seq())
     else
-        end_pos = start_pos + dur_value
+        dur = dur_value
     end
+    end_pos = util.clamp(start_pos + dur, 0.001, 1.0)
     -- Rate: read from PAIRED rate-control cell's sequins or value_mode
     -- For trigger cell at (x, y), the rate cell is at (x + 1, y)
     local rate_value = Roles.Sequencer.get_value(x + 1, y, 'rate')
@@ -298,20 +321,71 @@ local function dispatch_sampler_rate(x, y, seq)
     engine.sampler_set_param(slot, 'rate', rate)
 end
 
--- One-shot row 8 cols 1-13
+Roles.oneshot_cursors = {}
+Roles.oneshot_accent_cursors = {}
+-- What each one-shot slot actually holds in SC, written by voice_params'
+-- loaders: { kind = 'file' | 'folder', key = path_or_dir, count = n }.
+-- The dispatcher reads this, not the 'source' param, so its sample
+-- selection always matches what's loaded.
+Roles.oneshot_sources = {}
+
+-- One-shot row 8 cols 1-12
 local function dispatch_oneshot_trigger(x, y, seq)
-    local slot = x  -- one-shot slot = col number for x = 1..13
+    local slot = x  -- one-shot slot = col number for x = 1..12
     local cell_id = Roles.cell_id(x, y)
-    local voice_key = next_voice_key(cell_id, 1)
-    local rate_value = Roles.Sequencer.get_value(x, y, 'rate')
-    local rate
-    if rate_value == nil then
-        -- lied mode: rate from sequins. Use byte / 36 for typical range 1.0–2.0
-        rate = seq() / 36
-    else
-        rate = rate_value
+    local poly = Roles.polyphony[cell_id] or 1
+    local voice_key = next_voice_key(cell_id, poly)
+    local p = 'oneshot_' .. slot .. '_'
+    local function opt(name, fallback)
+        return params.lookup[p .. name] and params:get(p .. name) or fallback
     end
-    engine.oneshot_trigger(slot, voice_key, rate)
+
+    local src = Roles.oneshot_sources[slot]
+    local count = (src and src.kind == 'folder') and src.count or 1
+    local sel_mode = opt('sample_select', 1)  -- 1 seq, 2 random, 3 lied
+    local acc_mode = opt('accent_mode', 1)    -- 1 off, 2 pattern, 3 lied
+    local rate_value = Roles.Sequencer.get_value(x, y, 'rate')
+
+    -- Every hit reads 3 characters (rate, sample, accent) whatever the modes
+    -- (on top of the 2 the clock reads in lied seq_mode), so switching lied
+    -- accents or lied sample select never shifts which characters drive the
+    -- rhythm. Characters for modes that are off are read and dropped.
+    -- Separate statements keep the read order fixed.
+    local rate_byte   = seq()
+    local sample_byte = seq()
+    local accent_byte = seq()
+
+    -- lied mode: byte / 36 gives a typical rate range of 1.0–2.0
+    local rate = rate_value or (rate_byte / 36)
+
+    local sample_idx = 0
+    if count > 1 then
+        if sel_mode == 2 then
+            sample_idx = math.random(0, count - 1)
+        elseif sel_mode == 3 then
+            sample_idx = sample_byte % count
+        else
+            local cur = Roles.oneshot_cursors[slot] or 0
+            sample_idx = cur % count
+            Roles.oneshot_cursors[slot] = cur + 1
+        end
+    end
+
+    local amp_scale = 1.0
+    if acc_mode == 2 or acc_mode == 3 then
+        local accented
+        if acc_mode == 2 then
+            local len = opt('accent_length', 4)
+            local cur = Roles.oneshot_accent_cursors[slot] or 0
+            Roles.oneshot_accent_cursors[slot] = cur + 1
+            accented = (params:get(p .. 'accent_step_' .. ((cur % len) + 1)) == 2)
+        else
+            accented = (accent_byte >= 65 and accent_byte <= 90)  -- 'A'..'Z'
+        end
+        amp_scale = accented and opt('accent_boost', 1.6) or opt('accent_unaccent', 0.7)
+    end
+
+    engine.oneshot_trigger(slot, voice_key, rate, sample_idx, amp_scale)
 end
 
 -- ========================================================================
@@ -335,11 +409,11 @@ function Roles.dispatch(x, y)
             dispatch_sampler_rate(x, y, seq_fn)
         end
     elseif y == 8 then
-        if x <= 13 then
+        if x <= 12 then
             dispatch_oneshot_trigger(x, y, seq_fn)
         end
-        -- cols 14-16 are mic/granular on/off toggles; no per-tick action.
-        -- The toggle press handler in schicksalslied.lua manages their amps.
+        -- cols 13-16 are toggles (freeze, mic, granular out, mic monitor); no per-tick action.
+        -- The toggle press handler in schicksalslied.lua manages their states.
     end
 end
 

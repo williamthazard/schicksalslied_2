@@ -87,11 +87,11 @@ function LiedLfos.add_sampler_lfos_group()
 end
 
 -- ────────────────────────────────────────────────────────────────────────
--- ONE-SHOT LFOS — 4 LFOs × 13 one-shots = 52 LFOs. Capacity: 52 × 16 = 832.
+-- ONE-SHOT LFOS — 4 LFOs × 12 one-shots = 48 LFOs. Capacity: 48 × 16 = 768.
 -- ────────────────────────────────────────────────────────────────────────
 function LiedLfos.add_oneshot_lfos_group()
-    params:add_group('oneshot_lfos', 'one-shot LFOs', 52 * 16)
-    for slot = 1, 13 do
+    params:add_group('oneshot_lfos', 'one-shot LFOs', 48 * 16)
+    for slot = 1, 12 do
         local prefix = 'oneshot_' .. slot .. '_'
         local label_prefix = 'one-shot ' .. slot .. ' '
         LiedLfos.bind('oneshot_' .. slot .. '_amp',       prefix .. 'amp',        0, 2,     label_prefix .. 'amp')

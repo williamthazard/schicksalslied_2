@@ -22,6 +22,26 @@ local Grain      = include 'lib/grid_grain_params'
 local MidiInput  = include 'lib/midi_input'
 
 -- ========================================================================
+-- MIC MONITOR (row 8 col 16 = shortcut to the norns LEVELS monitor)
+-- ========================================================================
+-- norns mutes below -80 dB (util.dbamp), so that's the LED's on/off line.
+local MONITOR_MUTE_BELOW_DB = -80
+-- Unmute level when there's none remembered (monitor was off at load, or
+-- muted from LEVELS): clearly audible, but well under unity to avoid feedback.
+local MONITOR_UNMUTE_DEFAULT_DB = -12
+local monitor_unmute_db = nil     -- level captured when col 16 / panic muted
+local prior_monitor_action = nil  -- norns' own action; handed back in cleanup
+
+local function monitor_is_on(db) return db >= MONITOR_MUTE_BELOW_DB end
+
+-- Mute the monitor, remembering its level so col 16 can bring it back.
+local function mute_monitor()
+    local db = params:get('monitor_level')
+    if monitor_is_on(db) then monitor_unmute_db = db end
+    params:set('monitor_level', -math.huge)
+end
+
+-- ========================================================================
 -- SAMPLE DURATION GUARD
 -- ========================================================================
 local MAX_SAMPLE_SEC = 600  -- 10-minute max per Sampler/OneShot buffer
@@ -200,10 +220,10 @@ local function state_param_id_for(x, y)
         if x % 2 == 1 then return 'sampler_' .. (math.floor((x + 1) / 2) + 8) .. '_state' end
         return 'cell_' .. x .. '_' .. y .. '_state'  -- rate cell
     elseif y == 8 then
-        if x <= 13 then return 'oneshot_' .. x .. '_state'
+        if x <= 12 then return 'oneshot_' .. x .. '_state'
+        elseif x == 13 then return 'granular_freeze'
         elseif x == 14 then return 'mic_to_delay_state'
         elseif x == 15 then return 'granular_out_state'
-        elseif x == 16 then return 'mic_dry_state'
         end
     end
     return nil
@@ -240,16 +260,27 @@ g.key = function(x, y, z)
         -- exists so the params menu stays in sync with the grid. The state
         -- param's action handles writing Sequencer.Toggled + any side
         -- effects (ensure_allocated for row 2; engine.set_mic_amp etc. for
-        -- the mic/granular toggles on row 8 cols 14-16). Cells without a
+        -- the freeze/mic/granular toggles on row 8 cols 13-15; col 16 is
+        -- the LEVELS monitor, handled first below). Cells without a
         -- state param (sampler rate cells on rows 4/6 even cols) fall back
         -- to the direct Toggled write.
         if z == 1 then
-            local state_id = state_param_id_for(x, y)
-            if state_id then
-                local cur = params:get(state_id) or 1
-                params:set(state_id, (cur == 1) and 2 or 1)
+            if x == 16 and y == 8 then
+                -- Row 8 col 16: mute/unmute the norns LEVELS monitor. The
+                -- wrapped monitor_level action (init) updates the LED.
+                if monitor_is_on(params:get('monitor_level')) then
+                    mute_monitor()
+                else
+                    params:set('monitor_level', monitor_unmute_db or MONITOR_UNMUTE_DEFAULT_DB)
+                end
             else
-                Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
+                local state_id = state_param_id_for(x, y)
+                if state_id then
+                    local cur = params:get(state_id) or 1
+                    params:set(state_id, (cur == 1) and 2 or 1)
+                else
+                    Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
+                end
             end
         end
 
@@ -357,13 +388,13 @@ local function panic()
     Roles.free_all()
     -- Clear w/tape looper running flags
     Roles.looper_running = {}
-    -- Silence the persistent granular delay chain + mic passthrough
+    -- Silence the persistent granular delay chain + mute hardware monitor
     engine.set_mic_amp(0)
-    engine.set_mic_dry_amp(0)
     engine.set_granular_out_amp(0)
     engine.set_fb_amp(0)
+    mute_monitor()  -- col 16 brings it back at its previous level
     -- Fully free the granular chain (frees ~50-70% baseline CPU; user must
-    -- re-toggle row 8 col 14/15/16 to bring it back)
+    -- re-toggle row 8 col 14/15 to bring it back)
     engine.free_granular()
     -- Hard-stop in-flight sampler and one-shot playback
     engine.silence_all_samplers()
@@ -466,7 +497,7 @@ local function global_randomize()
     end
     for x = 1, 16 do VoiceParams.randomize_row2_cell(x) end
     for slot = 1, 16 do VoiceParams.randomize_sampler(slot) end
-    for slot = 1, 13 do VoiceParams.randomize_oneshot(slot) end
+    for slot = 1, 12 do VoiceParams.randomize_oneshot(slot) end
     VoiceParams.randomize_granular()
     print('GLOBAL RANDOMIZE: applied')
 end
@@ -559,7 +590,7 @@ local function add_params()
                     params:set(string.format('cell_%d_%d_rate_mode', x, y), 1)
                 end
             end
-            for x = 1, 13 do
+            for x = 1, 12 do
                 params:set(string.format('cell_%d_8_rate_mode', x), 1)
             end
         end,
@@ -851,26 +882,30 @@ local function add_params()
     -- GRANULAR DELAY GROUP (spec §6)
     -- ────────────────────────────────────────────────────────────────────
     Grain.add_params()
-    -- Master amps live in the granular_delay group too. Add them AFTER
-    -- Grain.add_params() so they appear at the top of the group (under the
-    -- 'master amps' separator that grid_grain_params.lua creates).
+    -- Master amps live in the granular_delay group too: they're its last
+    -- 2 params (Grain.add_params' group count includes them), so they show
+    -- at the bottom of the group, not under its 'master amps' separator.
+    -- Each amp pushes to SC live only while its state toggle (row 8 col
+    -- 14/15) is on; when off, the knob just stores the value the toggle
+    -- will send on its next switch-on (so turning a knob never re-opens a
+    -- path the toggle closed, and never allocates the granular chain).
     params:add{
         type = 'control',
         id = 'mic_to_delay_amp',
         name = 'mic to delay amp',
         controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
+        action = function(v)
+            if params:get('mic_to_delay_state') == 2 then engine.set_mic_amp(v) end
+        end,
     }
     params:add{
         type = 'control',
         id = 'granular_out_amp',
         name = 'granular out amp',
         controlspec = controlspec.new(0, 1, 'lin', 0.01, 0.3, ''),
-    }
-    params:add{
-        type = 'control',
-        id = 'mic_dry_amp',
-        name = 'mic dry amp',
-        controlspec = controlspec.new(0, 2, 'lin', 0.01, 0.5, ''),
+        action = function(v)
+            if params:get('granular_out_state') == 2 then engine.set_granular_out_amp(v) end
+        end,
     }
 
     -- ────────────────────────────────────────────────────────────────────
@@ -975,11 +1010,12 @@ local function add_params()
     }
 
     -- ────────────────────────────────────────────────────────────────────
-    -- ROW-2 CELLS GROUP (16 cells × 48 params + 4 bulk = 772)
-    -- Each cell: 1 separator + 1 state + 1 role + 1 string + 15 seq_mode + 9 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize + 1 unused = 48
-    -- shared: amp, amp_slew, pan, pan_slew, polyphony, dry_send, reverb_send, delay_send, granular_send
+    -- ROW-2 CELLS GROUP (16 cells × 49 params + 5 bulk = 789)
+    -- Each cell: 1 separator + 1 state + 1 role + 1 string + 15 seq_mode + 10 shared + 16 TriSin + 1 Ringer + 1 MIDI + 1 randomize + 1 unused = 49
+    -- shared: amp, amp_slew, pan, pan_slew, polyphony, dry_send, reverb_send, delay_send, granular_send, hz_offset
+    -- bulk: all Sine, all TriSin, all Ringer, default mix, randomize roles
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('row_2_cells', 'synths', 16 * 48 + 4)
+    params:add_group('row_2_cells', 'synths', 16 * 49 + 5)
     do
         local VoiceParams = include 'lib/voice_params'
         for x = 1, 16 do
@@ -988,10 +1024,18 @@ local function add_params()
         end
         params:add{
             type = 'trigger',
+            id = 'row_2_set_all_sine',
+            name = 'synths: all Sine',
+            action = function()
+                for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 1) end
+            end,
+        }
+        params:add{
+            type = 'trigger',
             id = 'row_2_set_all_trisin',
             name = 'synths: all TriSin',
             action = function()
-                for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 1) end
+                for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 2) end
             end,
         }
         params:add{
@@ -999,7 +1043,7 @@ local function add_params()
             id = 'row_2_set_all_ringer',
             name = 'synths: all Ringer',
             action = function()
-                for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 2) end
+                for x = 1, 16 do params:set('cell_' .. x .. '_2_role', 3) end
             end,
         }
         params:add{
@@ -1019,7 +1063,7 @@ local function add_params()
             name = 'synths: randomize roles',
             action = function()
                 for x = 1, 16 do
-                    params:set('cell_' .. x .. '_2_role', math.random(1, 11))
+                    params:set('cell_' .. x .. '_2_role', math.random(1, #Roles.ENUM))
                 end
             end,
         }
@@ -1065,8 +1109,11 @@ local function add_params()
                         -- Load creates a fresh SC instance at SynthDef defaults;
                         -- push current Lua param values so they survive reloads.
                         VoiceParams.reapply_sampler(slot)
+                    else
+                        -- Rejected (warning printed): clear rather than keep
+                        -- playing the previous sample under this file's name.
+                        engine.sampler_clear(slot)
                     end
-                    -- if duration check fails, no engine call; warning already printed
                 end,
             }
             VoiceParams.add_sampler_block(slot)  -- 9 voice params
@@ -1077,7 +1124,7 @@ local function add_params()
             VoiceParams.add_cell_string_block(trigger_col, trigger_row)           -- 1
             VoiceParams.add_cell_seq_mode_block(trigger_col, trigger_row)         -- 15
             VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'position', 0, 0.9)   -- 13
-            VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'duration', 0.001, 0.1) -- 13
+            VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'duration', 0.001, 1.0) -- 13
 
             params:add_separator(
                 string.format('sampler_%d_rate_cell_separator', slot),
@@ -1118,7 +1165,7 @@ local function add_params()
                 for y = 4, 6, 2 do
                     for x = 1, 15, 2 do
                         params:set(string.format('cell_%d_%d_duration_fixed_value', x, y),
-                            0.001 + math.random() * 0.099)
+                            0.001 + math.random() * 0.999)
                     end
                 end
             end,
@@ -1141,31 +1188,44 @@ local function add_params()
 
     -- ────────────────────────────────────────────────────────────────────
     -- ONE-SHOT SAMPLERS GROUP
-    -- Each slot: 1 separator + 1 file + 13 voice + 1 string + 15 seq_mode + 13 rate value_mode = 44
+    -- Each slot: 1 separator + 1 source + 1 file + 14 folder/accent + 13 voice
+    --           + 1 string + 15 seq_mode + 13 rate value_mode = 59
+    -- folder/accent: folder, sample_select, accent_mode, accent_length,
+    --                accent_step_1..8, accent_boost, accent_unaccent = 14
     -- voice: state + amp, amp_slew, cutoff, resonance, pan, pan_slew, polyphony,
     --        dry_send, reverb_send, delay_send, granular_send, randomize = 13
-    -- 13 slots × 44 + 2 bulk triggers = 574
+    -- 12 slots × 59 + 2 bulk triggers = 710
     -- ────────────────────────────────────────────────────────────────────
-    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 44 + 2)
+    params:add_group('one_shot_samplers', 'one-shot samplers', 12 * 59 + 2)
     do
         local VoiceParams = include 'lib/voice_params'
-        for slot = 1, 13 do
+        for slot = 1, 12 do
             params:add_separator('oneshot_' .. slot .. '_separator', 'one-shot ' .. slot)
+            VoiceParams.add_oneshot_source_param(slot)                        -- 1
             params:add{
                 type = 'file',
                 id = 'oneshot_' .. slot .. '_file',
                 name = 'one-shot ' .. slot .. ' file',
                 action = function(path)
+                    -- Only the param 'source' selects reaches the engine
+                    -- (see VoiceParams.load_selected_oneshot).
+                    if params:get('oneshot_' .. slot .. '_source') ~= 1 then return end
                     if path == nil or path == '' or path == '-' then
-                        engine.oneshot_clear(slot)
+                        VoiceParams.clear_oneshot(slot)
                     elseif check_sample_duration('one-shot', slot, path) then
-                        engine.oneshot_load(slot, path)
-                        VoiceParams.reapply_oneshot(slot)
+                        if VoiceParams.claim_oneshot_source(slot, 'file', path, 1) then
+                            engine.oneshot_load(slot, path)
+                            VoiceParams.reapply_oneshot(slot)
+                        end
+                    else
+                        -- Rejected (warning printed): clear rather than keep
+                        -- playing the previous sample under this file's name.
+                        VoiceParams.clear_oneshot(slot)
                     end
-                    -- if duration check fails, no engine call; warning already printed
                 end,
             }
-            VoiceParams.add_oneshot_block(slot)                               -- 9
+            VoiceParams.add_oneshot_folder_and_accent_params(slot)            -- 14
+            VoiceParams.add_oneshot_block(slot)                               -- 13
             VoiceParams.add_cell_string_block(slot, 8)                        -- 1
             VoiceParams.add_cell_seq_mode_block(slot, 8)                      -- 15
             VoiceParams.add_cell_value_mode_block(slot, 8, 'rate', -16, 16)   -- 13
@@ -1177,7 +1237,7 @@ local function add_params()
             id = 'oneshots_randomize_all',
             name = 'randomize all one-shots',
             action = function()
-                for slot = 1, 13 do VoiceParams.randomize_oneshot(slot) end
+                for slot = 1, 12 do VoiceParams.randomize_oneshot(slot) end
             end,
         }
         params:add{
@@ -1186,7 +1246,7 @@ local function add_params()
             name = 'randomize all one-shot rates',
             action = function()
                 local Timing = include 'lib/timing'
-                for x = 1, 13 do
+                for x = 1, 12 do
                     params:set(string.format('cell_%d_8_rate_fixed_value', x),
                         math.random(#Timing.RATE_OPTIONS))
                 end
@@ -1306,7 +1366,8 @@ function init()
     -- Solution: capture the prior action and call it first from our wrapper.
     engine.set_beat_sec(clock.get_beat_sec())
     do
-        local prior = params:lookup_param('clock_tempo').action
+        local p = params:lookup_param('clock_tempo')
+        local prior = p and p.action or nil
         params:set_action('clock_tempo', function(bpm)
             if prior then prior(bpm) end  -- update the actual clock first
             engine.set_beat_sec(clock.get_beat_sec())
@@ -1318,6 +1379,16 @@ function init()
 
     Midi.init()
 
+    -- Row 8 col 16 ↔ LEVELS monitor_level: wrap norns' own action so the
+    -- LED follows changes made anywhere (grid, LEVELS menu, panic).
+    prior_monitor_action = params:lookup_param('monitor_level').action
+    params:set_action('monitor_level', function(db)
+        if prior_monitor_action then prior_monitor_action(db) end
+        Sequencer.Toggled[16][8] = monitor_is_on(db)
+        grid_dirty = true
+    end)
+    Sequencer.Toggled[16][8] = monitor_is_on(params:get('monitor_level'))
+
     -- After params:bang, force-fire each cell role action so initial visibility
     -- is correct (params:bang fires actions but params:hide may not propagate
     -- to the menu redraw on first boot — explicitly re-setting each role does).
@@ -1326,11 +1397,19 @@ function init()
         params:set('cell_' .. x .. '_2_role', role_idx)
     end
 
+    -- Refresh one-shot source and accent visibility
+    do
+        local VoiceParams = include 'lib/voice_params'
+        for slot = 1, 12 do
+            VoiceParams._update_oneshot_visibility(slot)
+        end
+    end
+
     -- Refresh seq_mode visibility for all sequencer-enabled cells.
-    -- Row 8 cols 14-16 are mic/granular on/off toggles (NOT sequencer cells),
+    -- Row 8 cols 13-16 are granular/mic toggles (NOT sequencer cells),
     -- so they have no seq_mode params — skip them.
     for y = 2, 8, 2 do
-        local max_x = (y == 8) and 13 or 16
+        local max_x = (y == 8) and 12 or 16
         for x = 1, max_x do
             local mode_idx = params:get('cell_' .. x .. '_' .. y .. '_seq_mode')
             params:set('cell_' .. x .. '_' .. y .. '_seq_mode', mode_idx)
@@ -1349,7 +1428,7 @@ function init()
             params:set(pid, params:get(pid))
         end
     end
-    for x = 1, 13 do
+    for x = 1, 12 do
         local pid = 'cell_' .. x .. '_8_rate_mode'
         params:set(pid, params:get(pid))
     end
@@ -1399,6 +1478,11 @@ end
 function cleanup()
     Sequencer.stop_all_clocks()
     Roles.free_all()
+    -- Hand monitor_level its own action back. The level itself stays where
+    -- the user left it: col 16 is just a shortcut to the LEVELS setting.
+    if prior_monitor_action then
+        params:set_action('monitor_level', prior_monitor_action)
+    end
     if screen_metro then screen_metro:stop() end
     if grid_metro then grid_metro:stop() end
     if fire_decay_metro then fire_decay_metro:stop() end

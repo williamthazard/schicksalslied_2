@@ -13,16 +13,16 @@ How the voice-pool pattern specializes for a one-shot lifecycle. After this chap
 
 ## Prerequisites within the tutorial
 
-- Chapter 05. Ringer shares the voice-pool pattern structure with TriSin — the `classvar voiceKeys`, `globalParams`/`voiceParams`/`singleVoices`, `*initClass + StartUp.add` idiom, and `setParam` machinery are identical and not re-explained here.
+- Chapter 05. Ringer shares the voice-pool pattern structure with TriSin — the `classvar voiceKeys`, `globalParams`/`voiceParams`/`singleVoices`, `*initClass` + `*addSynthDefs` idiom (`Lied.init` registers the SynthDefs, chapter 05), and `setParam` machinery are identical and not re-explained here.
 
 ## Source sections
 
 1. Class declaration + ivars (lines 1-9)
-2. `*initClass` with the SynthDef (lines 10-63)
-3. `*new` + `init` (lines 65-98)
+2. `*initClass` + `*addSynthDefs` (the SynthDef) (lines 10-62)
+3. `*new` + `init` (lines 64-98)
 4. `playVoice` and `trigger` (lines 100-116)
 5. `adjustVoice` and `setParam` (lines 118-135)
-6. `freeAllNotes` and `free` (lines 137-144)
+6. `freeAllNotes` and `free` (lines 137-143)
 
 ## 1. Class declaration and ivars
 
@@ -41,53 +41,55 @@ Ringer {
 
 The header note "perc envelope, doneAction:2" flags the two distinctive features: a percussive envelope shape (no held sustain) and self-freeing synths.
 
-## 2. `*initClass` with the SynthDef
+## 2. `*initClass` + `*addSynthDefs` (the SynthDef)
 
 ```supercollider
     *initClass {
         voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
-        StartUp.add {
-            var s = Server.default;
+    }
 
-            s.waitForBoot {
-
-                SynthDef("Ringer", {
-                    arg stopGate = 1,
-                        index,
-                        freq,
-                        amp,
-                        pan,
-                        freq_slew,
-                        amp_slew,
-                        pan_slew,
-                        dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
-                        dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
+    // Added by Lied.init once Crone has booted the server — never from a
+    // StartUp hook, which runs at every sclang start and could boot scsynth
+    // before Crone had set it up.
+    *addSynthDefs {
+        SynthDef("Ringer", {
+            arg stopGate = 1,
+                index,
+                freq,
+                hz_offset = 0,
+                amp,
+                pan,
+                freq_slew,
+                amp_slew,
+                pan_slew,
+                dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
+                dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 ```
 
-**Lines 10-27**: class initialization + SynthDef args.
+**Lines 10-29**: `*initClass`, then `*addSynthDefs` and SynthDef args. As in TriSin (chapter 05), `*initClass` only sets `voiceKeys`; the SynthDef lives in `*addSynthDefs`, which `Lied.init` calls once Crone has booted the server (a `StartUp.add`/`waitForBoot` hook here could boot scsynth before Crone configured it).
 
 - **`stopGate = 1`** — the envelope gate. Starts at 1 (envelope plays). Setting to a negative value (-1.05) forces release.
-- **`index`** — dual-purpose: controls envelope release time AND Ringz amplitude (a carry-over from the naherinlied source).
-- **`freq, amp, pan`** — standard voice params.
+- **`index`** — dual-purpose: it is the Ringz **decay time** (how long the filter rings, in seconds) AND it sets the envelope release time (`index.abs * 2`). It is *not* an amplitude control.
+- **`freq, hz_offset, amp, pan`** — standard voice params; `hz_offset` is a fixed Hz offset added to `freq` (default 0) for fine detuning.
 - **`freq_slew, amp_slew, pan_slew`** — smoothing times.
 - **Bus indices + send levels** — same shape as TriSin (4 buses, 4 sends; defaults: dry 1, others 0).
 
-17 args total — about half of TriSin's 33. The simpler signal chain needs fewer controls.
+18 args total — about half of TriSin's 34. The simpler signal chain needs fewer controls.
 
 ```supercollider
-                    var envelope, sig, signal, ampSig;
+            var envelope, sig, signal, ampSig;
 
-                    envelope = EnvGen.kr(
-                        envelope: Env.perc(
-                            attackTime: 0.01,
-                            releaseTime: index.abs * 2,
-                            level: 1),
-                        gate: stopGate,
-                        doneAction: 2
-                    );
+            envelope = EnvGen.kr(
+                envelope: Env.perc(
+                    attackTime: 0.01,
+                    releaseTime: index.abs * 2,
+                    level: 1),
+                gate: stopGate,
+                doneAction: 2
+            );
 ```
 
-**Lines 29-38**: variable declarations + the envelope.
+**Lines 31-40**: variable declarations + the envelope.
 
 `Env.perc(attackTime, releaseTime, level)` is a "percussive" envelope shape — attack to peak, then release. Args here:
 
@@ -100,55 +102,55 @@ The header note "perc envelope, doneAction:2" flags the two distinctive features
 - **`doneAction: 2`** — when the envelope ends, free the enclosing synth. **This is what makes Ringer one-shot** — each note allocates a fresh Synth that self-frees when its envelope completes.
 
 `★ Insight ─────────────────────────────────────`
-**`index.abs * 2` for release time** is a clever choice. The `index` param is dual-purpose: it controls the Ringz filter's resonance amplitude (line 46) AND the envelope release time. Higher index = more resonant ring AND longer decay. Lower index = softer ping AND shorter decay. Coupling these means tweaking one knob produces a coherent character change.
+**`index.abs * 2` for release time** is a clever choice. The `index` param is dual-purpose: it controls the Ringz filter's decay time AND the envelope release time. Higher index = longer ring AND longer decay. Lower index = shorter ping AND shorter decay. Coupling these means tweaking one knob produces a coherent character change.
 
 **`doneAction: 2` is the SC convention for "free when done."** Any synth that "plays through and is done" should use it. The alternative — Lua tracking when synths are expected to be done and explicitly freeing them — is fragile (Lua and SC clocks can drift) and adds complexity. Let SC self-clean when possible.
 `─────────────────────────────────────────────────`
 
 ```supercollider
-                    sig = Ringz.ar(
-                        Impulse.ar(0),
-                        freq.lag3(freq_slew),
-                        index,
-                        amp
-                    ) * envelope;
+            // amp is applied ONLY via ampSig below (single, linear fader
+            // law, matching TriSin/Sampler/OneShot).
+            sig = Ringz.ar(
+                Impulse.ar(0),
+                max(0.1, freq + hz_offset).lag3(freq_slew),
+                index
+            ) * envelope;
 
-                    signal = Pan2.ar(
-                        sig,
-                        pan.lag3(pan_slew)
-                    );
+            signal = Pan2.ar(
+                sig,
+                pan.lag3(pan_slew)
+            );
 
-                    ampSig = amp.lag3(amp_slew);
-                    Out.ar(dry_bus,    signal * ampSig * dry_send.lag3(0.05));
-                    Out.ar(reverb_bus, signal * ampSig * reverb_send.lag3(0.05));
-                    Out.ar(delay_bus,  signal * ampSig * delay_send.lag3(0.05));
-                    Out.ar(gran_bus,   signal * ampSig * granular_send.lag3(0.05));
-                }).add;
-            }
-        }
+            // Post-fader: amp scales all 4 sends
+            ampSig = amp.lag3(amp_slew);
+            Out.ar(dry_bus,    signal * ampSig * dry_send.lag3(0.05));
+            Out.ar(reverb_bus, signal * ampSig * reverb_send.lag3(0.05));
+            Out.ar(delay_bus,  signal * ampSig * delay_send.lag3(0.05));
+            Out.ar(gran_bus,   signal * ampSig * granular_send.lag3(0.05));
+        }).add;
     }
 ```
 
-**Lines 40-60**: signal generation and routing.
+**Lines 42-61**: signal generation and routing.
 
 - **`Impulse.ar(0)`** — fires one impulse at synth start. The `0` is the frequency (0 = single fire, not periodic). This is the "ping."
-- **`Ringz.ar(in, freq, decaytime, mul)`** — a resonant filter that rings at `freq` when excited. Here:
+- **`Ringz.ar(in, freq, decaytime)`** — a resonant filter that rings at `freq` when excited. Here:
   - `in = Impulse.ar(0)` — the impulse excites the filter.
-  - `freq = freq.lag3(freq_slew)` — the lagged frequency arg.
+  - `freq = max(0.1, freq + hz_offset).lag3(freq_slew)` — the base frequency plus the Hz offset (clamped to at least 0.1 Hz), smoothed by the slew time.
   - `decaytime = index` — the index controls how long the filter rings. (Note this is a duration in seconds, distinct from the envelope's release time which is `index.abs * 2`.)
-  - `mul = amp` — output gain.
+  - `mul` is left at 1 — gain is applied once, downstream.
 
 The result is multiplied by the envelope, producing a pinged-resonant note that decays away.
 
 - **`Pan2.ar(sig, pan)`** — stereo pan.
 - **Four `Out.ar` calls** — write to each FX bus at the bus's send level.
 
-Note that `amp` is doubled in the signal chain: passed as Ringz's `mul` arg (line 46) AND applied to the post-fader sends (line 56). This is intentional — inherited from naherinlied. The effective output is `amp²`, which the user accepts as the voice's character.
+`amp` is applied exactly once, via `ampSig` on the sends. The naherinlied donor also passed `amp` as Ringz's `mul`, making the effective output `amp²`; that was removed so Ringer's fader law matches every other voice (a fade on the amp knob is linear, and 0.5 means half, not a quarter).
 
 `★ Insight ─────────────────────────────────────`
 **`Ringz.ar(in, freq, decaytime, mul)` is the simplest plucked-string-style synthesis UGen.** An impulse excites a resonant filter; the filter rings at the input frequency; the natural decay produces a plucked-string sound. Compared to physical-modeling alternatives (Pluck.ar, karplus-strong networks), Ringz is much cheaper but less expressive. For the Ringer voice in this script, Ringz is plenty.
 
-**The doubled `amp` (mul on Ringz + post-fader multiplication)** could be considered a bug, but the comment in the source explicitly calls it "intentional, not a bug" — it preserves the naherinlied character. Fixing it would change the loudness response curve and require recalibrating every preset. Better to leave the quirk and document it.
+**Single-multiply `amp`** keeps loudness consistent across voices: the same amp value on a TriSin cell and a Ringer cell lands in the same ballpark, and LFOs/knob fades on amp behave the same everywhere. The tradeoff: presets saved under the old `amp²` law play louder below amp 1 (0.5 → 2× / +6 dB) and need re-levelling once.
 `─────────────────────────────────────────────────`
 
 ## 3. `*new` + `init`
@@ -165,6 +167,7 @@ Note that `amp` is doubled in the signal chain: passed as Ringz's `mul` arg (lin
 
         globalParams = Dictionary.newFrom([
             \freq, 400,
+            \hz_offset, 0,
             \index, 3,
             \amp, 0.5,
             \pan, 0,
@@ -190,7 +193,7 @@ Note that `amp` is doubled in the signal chain: passed as Ringz's `mul` arg (lin
     }
 ```
 
-**Lines 65-98**: constructor + initializer.
+**Lines 64-98**: constructor + initializer.
 
 Same shape as TriSin's init but with a smaller param set (no FM ratios, no multi-stage envelopes, no filter). Note `index, 3` defaults to medium decay (~6 second release).
 
@@ -216,7 +219,7 @@ The 8 voice subgroups + 8 param-dict copies follow the same pattern as TriSin's 
     }
 ```
 
-**Lines 102-116**: trigger machinery.
+**Lines 100-116**: trigger machinery.
 
 `playVoice(voiceKey, freq)` differs from TriSin's in a key way: **no `isPlaying` branch**.
 
@@ -274,7 +277,7 @@ Note: NO `isPlaying` branch. Every trigger always spawns a fresh synth because R
 }
 ```
 
-**Lines 137-144**: cleanup methods.
+**Lines 137-143**: cleanup methods.
 
 `freeAllNotes`:
 - **`voiceGroup.set(\stopGate, -1.05)`** — broadcast a forced-release to every active Ringer synth in the outer group. Each synth's envelope enters release mode; doneAction:2 frees each when release completes.

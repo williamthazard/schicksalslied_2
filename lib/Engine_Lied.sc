@@ -25,7 +25,6 @@ Engine_Lied : CroneEngine {
         this.addCommand(\set_reverb_damp, "f", { arg msg; kernel.setReverbDamp(msg[1]); });
         this.addCommand(\set_reverb_amp,  "f", { arg msg; kernel.setReverbAmp(msg[1]); });
         this.addCommand(\set_mic_amp,         "f", { arg msg; kernel.setMicAmp(msg[1]); });
-        this.addCommand(\set_mic_dry_amp,     "f", { arg msg; kernel.setMicDryAmp(msg[1]); });
         this.addCommand(\set_granular_out_amp,"f", { arg msg; kernel.setGranularOutAmp(msg[1]); });
         this.addCommand(\set_fb_amp,          "f", { arg msg; kernel.setFbPatchAmp(msg[1]); });
         this.addCommand(\set_fb_balance,      "f", { arg msg; kernel.setFbPatchBalance(msg[1]); });
@@ -41,6 +40,36 @@ Engine_Lied : CroneEngine {
         });
         this.addCommand(\set_grain_res_rate, "if", { arg msg;
             kernel.setGrainResRate(msg[1].asInteger, msg[2]);
+        });
+        this.addCommand(\set_granular_freeze, "i", { arg msg;
+            kernel.setGranularFreeze(msg[1].asInteger);
+        });
+        this.addCommand(\set_rec_pre_level, "f", { arg msg;
+            kernel.setRecPreLevel(msg[1]);
+        });
+        this.addCommand(\set_grain_window, "i", { arg msg;
+            kernel.setGrainWindow(msg[1].asInteger);
+        });
+        this.addCommand(\set_grain_sync_distribution, "f", { arg msg;
+            kernel.setGrainSyncDistribution(msg[1]);
+        });
+        this.addCommand(\set_grain_cutoff_ceiling, "f", { arg msg;
+            kernel.setGrainCutoffCeiling(msg[1]);
+        });
+        this.addCommand(\set_grain_rate_mult, "f", { arg msg;
+            kernel.setGrainRateMult(msg[1]);
+        });
+        this.addCommand(\set_grain_octaves, "i", { arg msg;
+            kernel.setGrainOctaves(msg[1].asInteger);
+        });
+        this.addCommand(\set_grain_fifths, "i", { arg msg;
+            kernel.setGrainFifths(msg[1].asInteger);
+        });
+        this.addCommand(\set_grain_suboctaves, "i", { arg msg;
+            kernel.setGrainSuboctaves(msg[1].asInteger);
+        });
+        this.addCommand(\set_grain_reverse, "i", { arg msg;
+            kernel.setGrainReverse(msg[1].asInteger);
         });
 
         // -----------------------------------------------------------------
@@ -79,6 +108,22 @@ Engine_Lied : CroneEngine {
             kernel.setRingerParam(msg[1].asSymbol, msg[2].asSymbol, msg[3]);
         });
 
+        this.addCommand(\sine_alloc, "s", { arg msg;
+            kernel.allocSine(msg[1].asSymbol);
+        });
+        this.addCommand(\sine_free, "s", { arg msg;
+            kernel.freeSine(msg[1].asSymbol);
+        });
+        this.addCommand(\sine_trigger, "sif", { arg msg;
+            var cellId = msg[1].asSymbol;
+            var voiceKey = msg[2].asInteger.asString.asSymbol;
+            var freq = msg[3];
+            kernel.triggerSine(cellId, voiceKey, freq);
+        });
+        this.addCommand(\sine_set_param, "ssf", { arg msg;
+            kernel.setSineParam(msg[1].asSymbol, msg[2].asSymbol, msg[3]);
+        });
+
         // -----------------------------------------------------------------
         // Sampler instance lifecycle (per row-4/6 slot, integer 1-16)
         // -----------------------------------------------------------------
@@ -102,20 +147,26 @@ Engine_Lied : CroneEngine {
         });
 
         // -----------------------------------------------------------------
-        // OneShot instance lifecycle (per row-8 slot, integer 1-13)
+        // OneShot instance lifecycle (per row-8 slot, integer 1-12)
         // -----------------------------------------------------------------
 
         this.addCommand(\oneshot_load, "is", { arg msg;
             kernel.loadOneShot(msg[1].asInteger, msg[2].asString);
         });
+        // Second arg: newline-separated file paths (Lua scans the folder).
+        this.addCommand(\oneshot_load_files, "is", { arg msg;
+            kernel.loadOneShotFiles(msg[1].asInteger, msg[2].asString);
+        });
         this.addCommand(\oneshot_clear, "i", { arg msg;
             kernel.clearOneShot(msg[1].asInteger);
         });
-        this.addCommand(\oneshot_trigger, "iif", { arg msg;
+        this.addCommand(\oneshot_trigger, "iifif", { arg msg;
             var slot = msg[1].asInteger;
             var voiceKey = msg[2].asInteger.asString.asSymbol;
             var rate = msg[3];
-            kernel.triggerOneShot(slot, voiceKey, rate);
+            var bufIdx = msg[4].asInteger;
+            var ampScale = msg[5];
+            kernel.triggerOneShot(slot, voiceKey, rate, bufIdx, ampScale);
         });
         this.addCommand(\oneshot_set_param, "isf", { arg msg;
             kernel.setOneShotParam(msg[1].asInteger, msg[2].asSymbol, msg[3]);

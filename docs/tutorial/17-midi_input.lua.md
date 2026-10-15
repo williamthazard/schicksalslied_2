@@ -160,7 +160,7 @@ function MidiInput._reapply_voice_params()
                      'dry_send', 'reverb_send', 'delay_send', 'granular_send' }
     for _, k in ipairs(shared) do
         local pid = 'midi_input_' .. k
-        if params.lookup[pid] then params:set(pid, params:get(pid)) end
+        if params.lookup[pid] then params:lookup_param(pid):bang() end
     end
     if MidiInput.role == 'TriSin' then
         local trisin_only = {
@@ -171,18 +171,18 @@ function MidiInput._reapply_voice_params()
         }
         for _, k in ipairs(trisin_only) do
             local pid = 'midi_input_' .. k
-            if params.lookup[pid] then params:set(pid, params:get(pid)) end
+            if params.lookup[pid] then params:lookup_param(pid):bang() end
         end
     elseif MidiInput.role == 'Ringer' then
         local pid = 'midi_input_decay'
-        if params.lookup[pid] then params:set(pid, params:get(pid)) end
+        if params.lookup[pid] then params:lookup_param(pid):bang() end
     end
 end
 ```
 
 **Lines 68-90**: push current param values to the freshly-allocated SC voice.
 
-Same pattern as `voice_params.lua:reapply_sampler` (chapter 09 of the conceptual tutorial): iterate a whitelist of SC-bound keys, call `params:set(pid, params:get(pid))` to re-fire each action.
+Same idea as `voice_params.lua:reapply_sampler` (chapter 13): iterate a whitelist of SC-bound keys and re-fire each action. Both use `params:lookup_param(pid):bang()`, which fires each action with its current value. The tempting `params:set(pid, params:get(pid))` does nothing in norns: setting a param to its own current value never fires the action, so the fresh SC voice would keep its SynthDef defaults.
 
 The whitelist branches on role:
 - **Shared params** (amp, sends, etc.) apply to both TriSin and Ringer.

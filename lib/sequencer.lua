@@ -189,9 +189,9 @@ local function step_for(x, y)
 end
 
 -- Start one clock loop per toggle cell (rows 2, 4, 6, 8 × 16 cols = 64 loops).
--- Note: row 8 cols 14-16 are NOT sequencer triggers (they're mic/granular
--- on/off toggles); their clock loops still run but their roles do nothing
--- on tick. See cell_roles.lua's row-8 cols 14-16 handling.
+-- Note: row 8 cols 13-16 are NOT sequencer triggers (they're the granular
+-- freeze / mic / granular-out / mic-monitor toggles); their clock loops still
+-- run but do nothing on tick. See cell_roles.lua's row-8 handling.
 function Sequencer.start_all_clocks()
     for x = 1, 16 do
         for y = 2, 8, 2 do  -- rows 2, 4, 6, 8

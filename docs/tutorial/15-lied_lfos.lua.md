@@ -188,8 +188,8 @@ Smaller per-sampler set than row-2 cells: just amp, pan, cutoff, resonance. Thes
 
 ```lua
 function LiedLfos.add_oneshot_lfos_group()
-    params:add_group('oneshot_lfos', 'one-shot LFOs', 52 * 16)
-    for slot = 1, 13 do
+    params:add_group('oneshot_lfos', 'one-shot LFOs', 48 * 16)
+    for slot = 1, 12 do
         local prefix = 'oneshot_' .. slot .. '_'
         local label_prefix = 'one-shot ' .. slot .. ' '
         LiedLfos.bind('oneshot_' .. slot .. '_amp',       prefix .. 'amp',        0, 2,     label_prefix .. 'amp')
@@ -200,7 +200,7 @@ function LiedLfos.add_oneshot_lfos_group()
 end
 ```
 
-**Lines 92-102**: 4 LFOs per one-shot × 13 one-shots = 52 LFOs. Same set as samplers (amp, pan, cutoff, resonance).
+**Lines 92-102**: 4 LFOs per one-shot × 12 one-shots = 48 LFOs; group capacity 48 × 16 = 768 params. Same set as samplers (amp, pan, cutoff, resonance). The loop must stop at the real slot count: binding an LFO for a slot whose target params don't exist (an earlier build looped to 13 after slot 13 was removed) fails inside the LFO library and takes down the whole LFO lattice.
 
 ## 7. `add_crow_lfos_group`
 
@@ -241,9 +241,9 @@ return LiedLfos
 Total LFOs bound in this build:
 - 160 row-2 voice LFOs.
 - 64 sampler LFOs.
-- 52 one-shot LFOs.
+- 48 one-shot LFOs.
 - 6 crow LFOs.
 
-**Total: 282 LFOs available.** All inert at script start; the user enables individual LFOs via their state params.
+**Total: 278 LFOs available.** All inert at script start; the user enables individual LFOs via their state params.
 
 To add a new LFO target, the work is: identify the target param ID, pick the right group function, add one `LiedLfos.bind(...)` line. Done. The dynamic-visibility/state/depth machinery comes for free from the LFO library.

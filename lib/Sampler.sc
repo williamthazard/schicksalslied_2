@@ -12,95 +12,101 @@ Sampler {
 
     *initClass {
         voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
-        StartUp.add {
-            var s = Server.default;
+    }
 
-            s.waitForBoot {
+    // Added by Lied.init once Crone has booted the server — never from a
+    // StartUp hook, which runs at every sclang start and could boot scsynth
+    // before Crone had set it up.
+    *addSynthDefs {
+        var s = Server.default;
 
-                SynthDef(\Sampler, {
-                    arg bufnum = 0,
-                        rate = 1,
-                        start = 0,
-                        end = 1,
-                        t_trig = 0,
-                        loops = 1,
-                        amp = 0.2,
-                        amp_slew = 0.05,
-                        pan = 0,
-                        pan_slew = 1,
-                        cutoff = 12000,
-                        cutoff_slew = 0.05,
-                        resonance = 1,
-                        rateSlew = 0.1,
-                        dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
-                        dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
-                    var snd, snd2, pos, pos2, frames, duration, env, sig, ampSig,
-                        startA, endA, startB, endB, crossfade, aOrB, filtered;
+        SynthDef(\Sampler, {
+            arg bufnum = 0,
+                rate = 1,
+                start = 0,
+                end = 1,
+                t_trig = 0,
+                loops = 1,
+                amp = 0.2,
+                amp_slew = 0.05,
+                pan = 0,
+                pan_slew = 1,
+                cutoff = 12000,
+                cutoff_slew = 0.05,
+                resonance = 1,
+                rateSlew = 0.1,
+                dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
+                dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
+            var snd, snd2, pos, pos2, frames, duration, env, sig, ampSig,
+                startA, endA, startB, endB, crossfade, aOrB, filtered;
 
-                    aOrB = ToggleFF.kr(t_trig);
-                    startA = Latch.kr(start, aOrB);
-                    endA   = Latch.kr(end,   aOrB);
-                    startB = Latch.kr(start, 1 - aOrB);
-                    endB   = Latch.kr(end,   1 - aOrB);
-                    crossfade = Lag.ar(K2A.ar(aOrB), 0.1);
+            aOrB = ToggleFF.kr(t_trig);
+            startA = Latch.kr(start, aOrB);
+            endA   = Latch.kr(end,   aOrB);
+            startB = Latch.kr(start, 1 - aOrB);
+            endB   = Latch.kr(end,   1 - aOrB);
+            crossfade = Lag.ar(K2A.ar(aOrB), 0.1);
 
-                    rate = Lag.kr(rate, rateSlew) * BufRateScale.kr(bufnum);
-                    frames = BufFrames.kr(bufnum);
-                    duration = frames * (end - start) / rate.abs / s.sampleRate * loops;
+            rate = Lag.kr(rate, rateSlew) * BufRateScale.kr(bufnum);
+            frames = BufFrames.kr(bufnum);
+            duration = frames * (end - start) / rate.abs / s.sampleRate * loops;
 
-                    env = EnvGen.ar(
-                        Env.new(
-                            levels: [0, amp, amp, 0],
-                            times:  [0.005, max(0.001, duration - 0.105), 0.1]),
-                        gate: t_trig,
-                    );
+            // Unity-level envelope: amp is applied ONLY via ampSig below.
+            // EnvGen latches each segment's target level when the segment
+            // starts, so baking amp in here froze the hold level at whatever
+            // amp was at trigger time — a retrigger while turned down held
+            // the loop silent until the next trigger, ignoring fade-ins.
+            env = EnvGen.ar(
+                Env.new(
+                    levels: [0, 1, 1, 0],
+                    times:  [0.005, max(0.001, duration - 0.105), 0.1]),
+                gate: t_trig,
+            );
 
-                    pos = Phasor.ar(
-                        trig: aOrB,
-                        rate: rate,
-                        start: (((rate > 0) * startA) + ((rate < 0) * endA)) * frames,
-                        end:   (((rate > 0) * endA)   + ((rate < 0) * startA)) * frames,
-                        resetPos: (((rate > 0) * startA) + ((rate < 0) * endA)) * frames,
-                    );
+            pos = Phasor.ar(
+                trig: aOrB,
+                rate: rate,
+                start: (((rate > 0) * startA) + ((rate < 0) * endA)) * frames,
+                end:   (((rate > 0) * endA)   + ((rate < 0) * startA)) * frames,
+                resetPos: (((rate > 0) * startA) + ((rate < 0) * endA)) * frames,
+            );
 
-                    snd = BufRd.ar(
-                        numChannels: 2,
-                        bufnum: bufnum,
-                        phase: pos,
-                        interpolation: 4,
-                    );
+            snd = BufRd.ar(
+                numChannels: 2,
+                bufnum: bufnum,
+                phase: pos,
+                interpolation: 4,
+            );
 
-                    pos2 = Phasor.ar(
-                        trig: (1 - aOrB),
-                        rate: rate,
-                        start: (((rate > 0) * startB) + ((rate < 0) * endB)) * frames,
-                        end:   (((rate > 0) * endB)   + ((rate < 0) * startB)) * frames,
-                        resetPos: (((rate > 0) * startB) + ((rate < 0) * endB)) * frames,
-                    );
+            pos2 = Phasor.ar(
+                trig: (1 - aOrB),
+                rate: rate,
+                start: (((rate > 0) * startB) + ((rate < 0) * endB)) * frames,
+                end:   (((rate > 0) * endB)   + ((rate < 0) * startB)) * frames,
+                resetPos: (((rate > 0) * startB) + ((rate < 0) * endB)) * frames,
+            );
 
-                    snd2 = BufRd.ar(
-                        numChannels: 2,
-                        bufnum: bufnum,
-                        phase: pos2,
-                        interpolation: 4,
-                    );
+            snd2 = BufRd.ar(
+                numChannels: 2,
+                bufnum: bufnum,
+                phase: pos2,
+                interpolation: 4,
+            );
 
-                    filtered = MoogFF.ar(
-                        in: (crossfade * snd) + ((1 - crossfade) * snd2) * env,
-                        freq: cutoff.lag3(cutoff_slew),
-                        gain: resonance);
+            filtered = MoogFF.ar(
+                in: (crossfade * snd) + ((1 - crossfade) * snd2) * env,
+                freq: cutoff.lag3(cutoff_slew),
+                gain: resonance);
 
-                    sig = Balance2.ar(filtered[0], filtered[1], pan.lag3(pan_slew));
+            sig = Balance2.ar(filtered[0], filtered[1], pan.lag3(pan_slew));
 
-                    // Post-fader: amp scales all 4 sends
-                    ampSig = amp.lag3(amp_slew);
-                    Out.ar(dry_bus,    LeakDC.ar(sig) * ampSig * dry_send.lag3(0.05));
-                    Out.ar(reverb_bus, LeakDC.ar(sig) * ampSig * reverb_send.lag3(0.05));
-                    Out.ar(delay_bus,  LeakDC.ar(sig) * ampSig * delay_send.lag3(0.05));
-                    Out.ar(gran_bus,   LeakDC.ar(sig) * ampSig * granular_send.lag3(0.05));
-                }).add;
-            }
-        }
+            // Post-fader: amp scales all 4 sends
+            ampSig = amp.lag3(amp_slew);
+            Out.ar(dry_bus,    LeakDC.ar(sig) * ampSig * dry_send.lag3(0.05));
+            Out.ar(reverb_bus, LeakDC.ar(sig) * ampSig * reverb_send.lag3(0.05));
+            Out.ar(delay_bus,  LeakDC.ar(sig) * ampSig * delay_send.lag3(0.05));
+            Out.ar(gran_bus,   LeakDC.ar(sig) * ampSig * granular_send.lag3(0.05));
+        }).add;
     }
 
     *new { arg buf, dryBusIdx, reverbBusIdx, delayBusIdx, granularBusIdx;

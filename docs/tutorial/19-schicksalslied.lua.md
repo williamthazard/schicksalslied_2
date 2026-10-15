@@ -1,6 +1,6 @@
 # Chapter 19 — `schicksalslied.lua`
 
-The top-level script. **1,407 source lines** — the largest file in the project. This is the integration point where every previous chapter's module gets wired together.
+The top-level script. **1,484 source lines** — the largest file in the project. This is the integration point where every previous chapter's module gets wired together. (The `Lines N-M` notes in this chapter were written against an earlier, shorter revision and are approximate; search the source for the quoted code.)
 
 If you've read chapters 03-18, the imports at the top of this file will all be familiar. The chapter has three movements. The first walks through the user-facing surface: keyboard input, grid handler, screen redraw, hardware keys/encoders, and the comprehensive `panic` function. The second is `add_params` — 737 lines of mostly-repetitive `params:add{...}` declarations; we establish the patterns and annotate the architecturally meaningful sections rather than reading every block. The third is `init()` and `cleanup()` — the orchestration that decides what gets set up in what order, including the PSET sidecar hook for persisting non-param script state across save/load.
 
@@ -55,6 +55,37 @@ The `include` calls don't cache (chapter 09). The file-local references are file
 
 **The SELECT screen description format** (triple-dash comments at the very top) is a Norns convention. The first uncommented line ends the description block. Adding code after the description but before `engine.name` would push parts of the description off the screen — keep the description as the very first thing.
 `─────────────────────────────────────────────────`
+
+## Mic monitor: row 8 col 16 as a LEVELS shortcut
+
+Right after the imports comes a small block of state for the grid's last cell:
+
+```lua
+-- norns mutes below -80 dB (util.dbamp), so that's the LED's on/off line.
+local MONITOR_MUTE_BELOW_DB = -80
+-- Unmute level when there's none remembered (monitor was off at load, or
+-- muted from LEVELS): clearly audible, but well under unity to avoid feedback.
+local MONITOR_UNMUTE_DEFAULT_DB = -12
+local monitor_unmute_db = nil     -- level captured when col 16 / panic muted
+local prior_monitor_action = nil  -- norns' own action; handed back in cleanup
+
+local function monitor_is_on(db) return db >= MONITOR_MUTE_BELOW_DB end
+
+-- Mute the monitor, remembering its level so col 16 can bring it back.
+local function mute_monitor()
+    local db = params:get('monitor_level')
+    if monitor_is_on(db) then monitor_unmute_db = db end
+    params:set('monitor_level', -math.huge)
+end
+```
+
+Row 8 col 16 is **not** an engine param. It is a shortcut to norns' own system **LEVELS → monitor** setting (the param `monitor_level`, the hardware input monitor). The mic therefore never passes through SuperCollider on its way to the output, so it can't re-enter the granular feedback patch (the old `liedMicDry` synth and `mic_dry_state` / `mic_dry_amp` params that did that inside the engine are gone).
+
+- **LED state** comes from the level itself: on iff `db >= -80`, the point where norns' `util.dbamp` mutes.
+- **Muting** (`mute_monitor`, used by col 16 and by `panic`) first remembers the current level if the monitor was audible, then sets `-math.huge` (silence).
+- **Unmuting** (col 16 when dark) sets the remembered level, or **-12 dB** if nothing was remembered (the monitor was already off at load, or was muted from the LEVELS menu itself).
+- **Staying in sync**: in `init`, after `params:bang()`, the script wraps `monitor_level`'s action: it calls norns' own prior action first (so the audio really changes), then updates `Sequencer.Toggled[16][8]` and marks the grid dirty. That way the LED follows changes made anywhere: the grid, the LEVELS menu, or panic.
+- **Leaving the script**: `cleanup` only hands the prior action back. It does **not** restore or change the level. Like any other LEVELS change, the monitor level stays where the user left it.
 
 ## Pre-flight: rejecting samples that are too long
 
@@ -307,10 +338,10 @@ local function state_param_id_for(x, y)
         if x % 2 == 1 then return 'sampler_' .. (math.floor((x + 1) / 2) + 8) .. '_state' end
         return 'cell_' .. x .. '_' .. y .. '_state'
     elseif y == 8 then
-        if x <= 13 then return 'oneshot_' .. x .. '_state'
+        if x <= 12 then return 'oneshot_' .. x .. '_state'
+        elseif x == 13 then return 'granular_freeze'
         elseif x == 14 then return 'mic_to_delay_state'
         elseif x == 15 then return 'granular_out_state'
-        elseif x == 16 then return 'mic_dry_state'
         end
     end
     return nil
@@ -325,12 +356,13 @@ The mapping:
 - **Row 4 even cols**: `cell_X_4_state` (rate cells).
 - **Row 6 odd cols**: `sampler_N_state` where N = 9-16.
 - **Row 6 even cols**: `cell_X_6_state` (rate cells).
-- **Row 8 cols 1-13**: `oneshot_N_state` where N = col.
+- **Row 8 cols 1-12**: `oneshot_N_state` where N = col.
+- **Row 8 col 13**: `granular_freeze` (a plain off/on option param).
 - **Row 8 col 14**: `mic_to_delay_state`.
 - **Row 8 col 15**: `granular_out_state`.
-- **Row 8 col 16**: `mic_dry_state`.
+- **Row 8 col 16**: no state param: it returns nil. Col 16 is the LEVELS monitor shortcut, which `g.key` handles before it ever asks for a state param (below).
 
-Used by `g.key` (route press through param) and `panic` (clear UI state).
+Used by `g.key` (route press through param) and `panic` (clear UI state). Because col 16 has no state param, `panic`'s loop falls through to a direct `Toggled[16][8] = false`, and then `mute_monitor()` actually silences the monitor (which re-lights/darkens the LED through the wrapped action).
 
 ## The grid handler (`g.key`)
 
@@ -359,12 +391,22 @@ g.key = function(x, y, z)
 
     elseif y == 2 or y == 4 or y == 6 or y == 8 then
         if z == 1 then
-            local state_id = state_param_id_for(x, y)
-            if state_id then
-                local cur = params:get(state_id) or 1
-                params:set(state_id, (cur == 1) and 2 or 1)
+            if x == 16 and y == 8 then
+                -- Row 8 col 16: mute/unmute the norns LEVELS monitor. The
+                -- wrapped monitor_level action (init) updates the LED.
+                if monitor_is_on(params:get('monitor_level')) then
+                    mute_monitor()
+                else
+                    params:set('monitor_level', monitor_unmute_db or MONITOR_UNMUTE_DEFAULT_DB)
+                end
             else
-                Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
+                local state_id = state_param_id_for(x, y)
+                if state_id then
+                    local cur = params:get(state_id) or 1
+                    params:set(state_id, (cur == 1) and 2 or 1)
+                else
+                    Sequencer.Toggled[x][y] = not Sequencer.Toggled[x][y]
+                end
             end
         end
 
@@ -382,7 +424,7 @@ end
 
 - **Always**: update Momentary, mark grid dirty.
 - **Row 1 (history)**: press → append history line to displayed_string. Release → if no other row-1 button held, stage the staged string.
-- **Rows 2, 4, 6, 8 (toggle rows)**: press → route through state param (which fires the param's action, writing Toggled + any side effects). Fallback for rate cells without state params: direct Toggled write.
+- **Rows 2, 4, 6, 8 (toggle rows)**: press → route through state param (which fires the param's action, writing Toggled + any side effects). Fallback for rate cells without state params: direct Toggled write. **Row 8 col 16 is special-cased first**: if the LEVELS monitor is audible it is muted (remembering its level); if dark it is set back to the remembered level or -12 dB. The LED then follows via the wrapped `monitor_level` action.
 - **Rows 3, 5, 7 (assign rows)**: press → assign my_string to cell above.
 
 The state-param routing is what makes grid presses equivalent to params menu actions or MIDI mapping. Single source of truth.
@@ -493,9 +535,9 @@ local function panic()
     Roles.free_all()
     Roles.looper_running = {}
     engine.set_mic_amp(0)
-    engine.set_mic_dry_amp(0)
     engine.set_granular_out_amp(0)
     engine.set_fb_amp(0)
+    mute_monitor()  -- col 16 brings it back at its previous level
     engine.free_granular()
     engine.silence_all_samplers()
     engine.silence_all_oneshots()
@@ -517,7 +559,7 @@ Walking through:
 1. **Clear all toggle states** via params:set (so the params menu reflects "off" alongside the grid LEDs).
 2. **`Roles.free_all()`** — free every allocated SC voice instance. Subsequent triggers will lazily re-allocate.
 3. **`Roles.looper_running = {}`** — clear the w/tape looper re-entry guard table.
-4. **Zero all granular amps** via engine commands.
+4. **Zero the granular amps** via engine commands, and **mute the hardware monitor** with `mute_monitor()` (the LEVELS monitor, not an engine command). `mute_monitor` remembers the level it had, so pressing col 16 afterwards brings the monitor back at that level rather than at the -12 dB default.
 5. **`engine.free_granular()`** — tear down the entire granular chain (frees ~50-70% baseline CPU).
 6. **`silence_all_samplers / oneshots`** — hard-stop in-flight sample playback via `resetVoices`.
 7. **`crow.ii.jf.run(0)`** — stop JF.
@@ -618,7 +660,7 @@ local function global_randomize()
     for slot = 1, 16 do
         VoiceParams.randomize_sampler(slot)
     end
-    for slot = 1, 13 do
+    for slot = 1, 12 do
         VoiceParams.randomize_oneshot(slot)
     end
     VoiceParams.randomize_granular()
@@ -634,7 +676,7 @@ Iterates all randomizable surfaces, calling each module's randomize function. Re
 
 ## `add_params`: the big params declaration block
 
-The biggest single block in the file (737 lines). It declares every parameter in the script. The structure is:
+The biggest single block in the file (roughly 900 lines). It declares every parameter in the script. The structure is:
 
 ```lua
 local function add_params()
@@ -657,10 +699,10 @@ local function add_params()
     -- delay_to_dry_send, reverb_room, reverb_damp, reverb_amp
     
     Grain.add_params()
-    -- granular delay group: 30 params (see grid_grain_params.lua.md)
+    -- granular delay group: 39 params (see grid_grain_params.lua.md)
     
-    params:add_group('row_2_cells', 'synths', 16 * 48 + 4)
-    -- 16 row-2 voice cells, ~48 params each, via VoiceParams.add_row2_cell_block
+    params:add_group('row_2_cells', 'synths', 16 * 49 + 5)
+    -- 16 row-2 voice cells, ~49 params each, via VoiceParams.add_row2_cell_block
     
     params:add_group('samplers', 'looping samplers', 16 * 89 + 4)
     -- 16 sampler slots, ~89 params each, via VoiceParams.add_sampler_block
@@ -668,17 +710,19 @@ local function add_params()
     --   + add_rate_cell_state_block + add_cell_value_mode_block (rate)
     --   + add_cell_string_block (twice for trigger + rate cells)
     
-    params:add_group('one_shot_samplers', 'one-shot samplers', 13 * 44 + 2)
-    -- 13 one-shot slots, ~44 params each
+    params:add_group('one_shot_samplers', 'one-shot samplers', 12 * 59 + 2)
+    -- 12 one-shot slots, 59 params each, per slot in this order: separator,
+    -- source, file, folder + accent params (14), voice block (13), string (1),
+    -- seq_mode (15), rate value_mode (13)
     
     LiedLfos.add_row_2_lfos_group()    -- 160 LFOs for row-2 cells
     LiedLfos.add_sampler_lfos_group()  -- 64 sampler LFOs
-    LiedLfos.add_oneshot_lfos_group()  -- 52 one-shot LFOs
+    LiedLfos.add_oneshot_lfos_group()  -- 48 one-shot LFOs
     LiedLfos.add_crow_lfos_group()     -- 6 crow/w-device LFOs
 end
 ```
 
-The full block is 737 lines because each per-cell / per-slot / per-LFO declaration is several lines of `params:add{...}` syntax.
+The full block is that long because each per-cell / per-slot / per-LFO declaration is several lines of `params:add{...}` syntax.
 
 ### Annotated key blocks
 
@@ -758,14 +802,14 @@ The delay sync param: option 1 is "free" (uses delay_time directly); options 2+ 
 **The cell-block loops** (row 2, samplers, one-shots) follow a consistent pattern:
 
 ```lua
-params:add_group('row_2_cells', 'synths', 16 * 48 + 4)
+params:add_group('row_2_cells', 'synths', 16 * 49 + 5)
 for x = 1, 16 do
     params:add_separator('row_2_cell_' .. x .. '_separator', 'cell ' .. x)
     VoiceParams.add_row2_cell_block(x)
 end
 ```
 
-For each cell: add a visual separator with the cell number, then call the block helper from voice_params. The block helper does all the heavy lifting (adding ~48 params per call).
+For each cell: add a visual separator with the cell number, then call the block helper from voice_params. The block helper does all the heavy lifting (adding ~49 params per call).
 
 Samplers are more elaborate because each sampler slot has multiple param categories:
 
@@ -805,9 +849,9 @@ for slot = 1, 16 do
     
     -- Value-mode params for trigger cell (position, duration)
     params:add_separator(..., 'trigger cell position')
-    VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'position', 0, 1)
+    VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'position', 0, 0.9)
     params:add_separator(..., 'trigger cell duration')
-    VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'duration', 0, 1)
+    VoiceParams.add_cell_value_mode_block(trigger_col, trigger_row, 'duration', 0.001, 1.0)
     
     -- Cell string param for trigger cell
     VoiceParams.add_cell_string_block(trigger_col, trigger_row)
@@ -822,22 +866,48 @@ end
 
 Each sampler slot accumulates: 1 file param + 9 sampler params + 15 seq_mode + 13×2 value_mode (position + duration) + 1 string + 1 rate state + 15 rate seq_mode + 13 rate value_mode + 1 rate string = **~89 params per slot**. Times 16 slots = ~1,420 params for samplers alone.
 
-One-shots are slightly simpler — no separate trigger/rate cell, just one set of params per slot: ~44 params per slot × 13 slots = ~570 params.
+One-shots have no separate trigger/rate cell, just one set of params per slot, but each also carries the source/folder/accent surface: 1 separator + 1 file + 15 source/accent + 13 voice + 1 string + 15 seq_mode + 13 rate value_mode = **59 params per slot** × 12 slots + 2 bulk triggers = 710 params.
 
-The file action calls `check_sample_duration` (section 2 of this chapter) BEFORE sending to the engine, and `VoiceParams.reapply_sampler(slot)` AFTER (to push current param values to the freshly-allocated SC voice).
+The **order inside a slot matters**. The loop adds the separator, then `VoiceParams.add_oneshot_source_param(slot)` (the `source` option, 1 param), then the `file` param (defined inline in this file), then `VoiceParams.add_oneshot_folder_and_accent_params(slot)` (14 params: folder, sample select, accent mode/length/steps/boost/unaccent), then the 13-param voice block, and so on. `source` comes **before** `file` for two reasons (chapter 13): the menu cursor stays on `source` when switching hides `file` and shows `folder`, and PSET recall restores params in this order, so `source` is applied first and only the selected side loads.
+
+The one-shot file param's action differs from the sampler's in one important way. Both the `file` param and the `folder` param exist for every slot, and the slot's `source` option (`file` / `folder`) decides which one reaches the engine:
+
+```lua
+action = function(path)
+    -- Only the param 'source' selects reaches the engine
+    -- (see VoiceParams.load_selected_oneshot).
+    if params:get('oneshot_' .. slot .. '_source') ~= 1 then return end
+    if path == nil or path == '' or path == '-' then
+        VoiceParams.clear_oneshot(slot)
+    elseif check_sample_duration('one-shot', slot, path) then
+        if VoiceParams.claim_oneshot_source(slot, 'file', path, 1) then
+            engine.oneshot_load(slot, path)
+            VoiceParams.reapply_oneshot(slot)
+        end
+    else
+        -- Rejected (warning printed): clear rather than keep
+        -- playing the previous sample under this file's name.
+        VoiceParams.clear_oneshot(slot)
+    end
+end
+```
+
+It returns early unless `source == 1`, clears the slot through `VoiceParams.clear_oneshot` for an empty path, and goes through `claim_oneshot_source`, which skips the load when the slot already holds that file (so `params:bang()` and PSET recall don't reload it). A file that fails the duration check also clears the slot, so the menu never shows one file while the slot plays another; the looping sampler's file action does the same with `engine.sampler_clear`. Folders are loaded by `VoiceParams.load_oneshot_folder` (chapter 13).
+
+The file action calls `check_sample_duration` (section 2 of this chapter) BEFORE sending to the engine, and `VoiceParams.reapply_sampler(slot)` AFTER (to push current param values to the freshly-allocated SC voice; the reapply helpers use `:bang()`, see chapter 13).
 
 `★ Insight ─────────────────────────────────────`
 **Total param count estimate**:
-- 9 global + 10 crow + 3 midi + 28 midi_input + 9 master_fx + 30 granular = 89 globals.
-- 16 row-2 cells × ~48 params = 768.
+- 9 global + 10 crow + 3 midi + 28 midi_input + 9 master_fx + 39 granular = 98 globals.
+- 16 row-2 cells × ~49 params = 784.
 - 16 samplers × ~89 = ~1,424.
-- 13 one-shots × ~44 = ~572.
-- 282 LFOs × ~16 sub-params each = ~4,512.
-- **Total: ~7,300 params.**
+- 12 one-shots × 59 = ~710.
+- 278 LFOs × ~16 sub-params each = ~4,450.
+- **Total: ~7,450 params.**
 
-That's a massive params surface. The group structure is what makes it navigable. Without `params:add_group`, all 7,300 would be one flat list. With it, the user navigates: PARAMETERS → looping samplers → sampler 3 → cutoff. Clear, scannable.
+That's a massive params surface. The group structure is what makes it navigable. Without `params:add_group`, all 7,450 would be one flat list. With it, the user navigates: PARAMETERS → looping samplers → sampler 3 → cutoff. Clear, scannable.
 
-**`params:bang()` at the end of init (covered next)** fires every action with the current value — 7,300+ action calls. Each action does one OSC dispatch. That's ~7,300 OSC messages in a few hundred milliseconds. Norns handles it.
+**`params:bang()` at the end of init (covered next)** fires every action with the current value — 7,400+ action calls. Each action does one OSC dispatch. That's ~7,400 OSC messages in a few hundred milliseconds. Norns handles it.
 `─────────────────────────────────────────────────`
 
 ## `init` — the orchestration
@@ -957,12 +1027,29 @@ In-place table mutation for `history` is critical: reassigning the local would o
 **Lines ~1291-1292**: initialize MIDI modules. They connect to vports and register event handlers.
 
 ```lua
+    -- Row 8 col 16 <-> LEVELS monitor_level: wrap norns' own action so the
+    -- LED follows changes made anywhere (grid, LEVELS menu, panic).
+    prior_monitor_action = params:lookup_param('monitor_level').action
+    params:set_action('monitor_level', function(db)
+        if prior_monitor_action then prior_monitor_action(db) end
+        Sequencer.Toggled[16][8] = monitor_is_on(db)
+        grid_dirty = true
+    end)
+    Sequencer.Toggled[16][8] = monitor_is_on(params:get('monitor_level'))
+
     for x = 1, 16 do
         local role_idx = params:get('cell_' .. x .. '_2_role')
         params:set('cell_' .. x .. '_2_role', role_idx)
     end
+    -- Refresh one-shot source and accent visibility
+    do
+        local VoiceParams = include 'lib/voice_params'
+        for slot = 1, 12 do
+            VoiceParams._update_oneshot_visibility(slot)
+        end
+    end
     for y = 2, 8, 2 do
-        local max_x = (y == 8) and 13 or 16
+        local max_x = (y == 8) and 12 or 16
         for x = 1, max_x do
             local mode_idx = params:get('cell_' .. x .. '_' .. y .. '_seq_mode')
             params:set('cell_' .. x .. '_' .. y .. '_seq_mode', mode_idx)
@@ -980,13 +1067,17 @@ In-place table mutation for `history` is critical: reassigning the local would o
             params:set(pid, params:get(pid))
         end
     end
-    for x = 1, 13 do
+    for x = 1, 12 do
         local pid = 'cell_' .. x .. '_8_rate_mode'
         params:set(pid, params:get(pid))
     end
 ```
 
-**Lines ~1294-1320**: force visibility refresh on every mode-driven param.
+**Lines ~1375-1430**: install the monitor-level wrapper, then force a visibility refresh on every mode-driven param.
+
+The **monitor wrapper** is the mirror image of the `clock_tempo` capture-then-chain above it: grab norns' own `monitor_level` action, replace it with one that calls the original first (so the hardware monitor really changes) and then updates `Toggled[16][8]` and `grid_dirty`, and seed the LED from the current level. `cleanup` restores the original action.
+
+The first loop also re-fires each cell's role param, which (via the role action) calls `reapply_row2_cell` only if the role actually changed; here the value is unchanged, so it just refreshes visibility. Seq-mode refresh for row 8 stops at col 12: cols 13-16 are toggles, not sequencer cells, so they have no `seq_mode` params.
 
 `params:bang()` fires all actions, BUT the visibility logic depends on the order of param declaration and on `_menu.rebuild_params()` being called after all the show/hide calls. To ensure initial visibility is correct, we re-fire each mode action explicitly with `params:set(pid, params:get(pid))` — this re-runs the action and triggers a visibility refresh.
 
@@ -1047,23 +1138,26 @@ end
 function cleanup()
     Sequencer.stop_all_clocks()
     Roles.free_all()
+    -- Hand monitor_level its own action back. The level itself stays where
+    -- the user left it: col 16 is just a shortcut to the LEVELS setting.
+    if prior_monitor_action then
+        params:set_action('monitor_level', prior_monitor_action)
+    end
     if screen_metro then screen_metro:stop() end
     if grid_metro then grid_metro:stop() end
     if fire_decay_metro then fire_decay_metro:stop() end
-    MidiInput.cleanup()
-    crow.ii.jf.run(0)
-    print('schicksalslied 2.0 cleanup complete')
+    g:all(0)
+    g:refresh()
 end
 ```
 
-**Lines 1399-1407**: symmetric teardown.
+**Lines ~1465-1484**: symmetric teardown.
 
 - Stop all clock coroutines.
 - Free all SC voice instances.
+- Give `monitor_level` its original norns action back. Cleanup deliberately does **not** change the monitor level: col 16 is a shortcut to a system LEVELS setting, so it stays wherever the user left it (like any LEVELS change), rather than being reset on exit.
 - Stop the three metros (with `if` guards in case init failed early).
-- Clean up MIDI input.
-- Stop JF.
-- Log.
+- Blank the grid LEDs.
 
 The kernel's `free` method is called separately by Norns (when the engine is unloaded). It tears down all SC-side state (groups, buses, granular chain, etc.).
 
@@ -1075,14 +1169,14 @@ The kernel's `free` method is called separately by Norns (when the engine is unl
 
 ## Summary
 
-`schicksalslied.lua` is 1,407 lines, but the line count is mostly in the repetitive `add_params` block — the architecturally meaningful surface is much smaller:
+`schicksalslied.lua` is about 1,480 lines, but the line count is mostly in the repetitive `add_params` block — the architecturally meaningful surface is much smaller:
 
 - ~100 lines of helpers (file_duration, crow_reinit, load_text_file).
 - ~120 lines of input handlers (keyboard, g.key, state_param_id_for).
 - ~80 lines of rendering (grid_redraw, redraw).
 - ~50 lines of panic.
 - ~50 lines of key/enc/global_randomize.
-- ~740 lines of add_params (mostly delegating to voice_params and granular helpers).
+- ~900 lines of add_params (mostly delegating to voice_params and granular helpers).
 - ~180 lines of init (the most important block).
 - ~10 lines of cleanup.
 

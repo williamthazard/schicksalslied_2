@@ -1,13 +1,13 @@
 # Chapter 05 — `lib/TriSin.sc`
 
-The FM-synthesis voice class. **190 lines.** TriSin is the most parameter-rich voice in the project — FM index envelope, MoogFF filter with optional envelope tracking, slewed pitch, plus the standard send routing.
+The FM-synthesis voice class. **198 lines.** TriSin is the most parameter-rich voice in the project — FM index envelope, MoogFF filter with optional envelope tracking, slewed pitch, plus the standard send routing.
 
 ## What you'll learn
 
 This chapter is the canonical introduction to the **voice-pool pattern** that all four voice classes share. After this chapter:
 
 - You'll understand the shared structural recipe (classvar `voiceKeys`, `globalParams` template, `singleVoices` subgroups, `voiceParams` cache, the trigger/setParam/free methods).
-- You'll understand the `*initClass` + `StartUp.add` idiom for one-time SynthDef registration.
+- You'll understand the `*initClass` + `*addSynthDefs` idiom for one-time SynthDef registration (called from `Lied.init`, never from a `StartUp` hook).
 - You'll have a complete `TriSin` class that can be instantiated and triggered from `Lied.sc`'s voice allocation methods.
 
 Chapters 06-08 (Ringer, Sampler, OneShot) reference back to this chapter for the common patterns and specialize on the differences.
@@ -31,8 +31,10 @@ class VoiceName {
     var <buffer;                // (only for Sampler / OneShot — holds the audio buffer)
 
     *initClass {
-        StartUp.add { /* SynthDef registration */ };
+        voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
     }
+
+    *addSynthDefs { /* SynthDef(...).add, called from Lied.init */ }
 
     *new { arg ... bus indices ...;
         ^super.new.init(...);
@@ -70,47 +72,47 @@ The **`globalParams` dictionary** is the template — when a new voice instance 
 **Per-voice param dicts also solve the "set the next note before triggering it" problem.** You can `setParam(\3, \freq, 880)` before triggering key 3, and the next `trigger(\3, ...)` will pick up the new freq because `voiceParams[\3].getPairs` includes the updated value. This is how the Lua side's per-voice param updates work without any explicit "queue this for next trigger" plumbing.
 `─────────────────────────────────────────────────`
 
-## The `*initClass` + `StartUp.add` idiom
+## The `*initClass` + `*addSynthDefs` idiom
 
 Look at the top of any voice class:
 
 ```supercollider
-*initClass {
-    voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
-    StartUp.add {
-        var s = Server.default;
-        s.waitForBoot {
-            SynthDef("TriSin", {
-                arg ...;
-                ...
-            }).add;
-        };
-    };
-}
+    *initClass {
+        voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
+    }
+
+    // Added by Lied.init once Crone has booted the server — never from a
+    // StartUp hook, which runs at every sclang start and could boot scsynth
+    // before Crone had set it up.
+    *addSynthDefs {
+        SynthDef("TriSin", {
+            arg ...;
+            ...
+        }).add;
+    }
 ```
 
 What is going on:
 
-- **`*initClass`** is a class method called automatically by SC when the class is loaded (compiled). It runs once, before any instances exist. Class-level state (the `voiceKeys` array) is set here.
-- **`StartUp.add { ... }`** adds the block to a list of "things to run at startup." `StartUp` is SC's mechanism for registering code that needs to run after the language is fully initialized but before user code starts.
-- **`s.waitForBoot { ... }`** schedules the inner block to run when the server is booted (or immediately if already booted). This ensures the SynthDef can be registered with the server — you can't `.add` a SynthDef before the server is running.
+- **`*initClass`** is a class method called automatically by SC when the class is compiled. It runs once, before any instances exist, and only sets class-level state (the `voiceKeys` array). It deliberately does **not** touch the server.
+- **`*addSynthDefs`** is an ordinary class method holding the SynthDef. Nothing calls it automatically: `Lied.init` calls `[TriSin, Ringer, Sine, Sampler, OneShot].do(_.addSynthDefs)` right before its `server.sync` (chapter 03). By then Crone has booted and configured the server, so `.add` registers the definition on a live server, once per engine load.
 
-So the chain of events is: class compiles → `*initClass` runs → adds a StartUp hook → at startup, the hook runs → it waits for boot → on boot, the SynthDef is registered. The SynthDef is therefore registered exactly once per server boot, automatically, with no manual intervention. This is exactly what you want for class-defined SynthDefs.
+So the chain of events is: class compiles → `*initClass` sets `voiceKeys` → Crone boots the server → the engine allocates and `Lied.init` runs → `*addSynthDefs` is called for each voice class → `server.sync` waits until all definitions are registered.
 
 `★ Insight ─────────────────────────────────────`
-**Why register SynthDefs in `*initClass` instead of in `init`?** Because `init` runs per-instance, and you only want the SynthDef registered once per server boot, not once per voice-class instance. If you registered in `init`, allocating 5 TriSin instances would call `.add` 5 times — harmless but wasteful, and a subtle violation of "this work should happen once."
+**Why not register SynthDefs from a `StartUp.add { Server.default.waitForBoot { ... } }` hook?** That is the usual SC idiom for class-defined SynthDefs, and it is what these classes used to do. On norns it is a trap: only Crone may boot the server, because its own startup clears `SC_JACK_DEFAULT_INPUTS`/`OUTPUTS` and then connects scsynth to JACK. A `StartUp` hook in a class file runs at every sclang start, whatever script is loaded, and can run before Crone's hook, booting scsynth un-configured. After SYSTEM > RESTART (sclang restarts, JACK keeps running) this showed up intermittently as `SUPERCOLLIDER FAIL` / `AUDIO ENGINE FAIL`, cleared only by a power cycle. Calling `*addSynthDefs` from `Lied.init` removes the voice classes from the boot sequence entirely.
 
-**The `s.waitForBoot { ... }` is critical** because `*initClass` runs at language startup, which usually happens before the server boots. Without the wait, the `.add` call would target a not-yet-booted server and silently no-op. The "SynthDef not found" errors that confuse SC beginners are often this exact situation: the SynthDef was "registered" before the server was alive.
+**Why a class method rather than `init`?** `init` runs per instance, and the SynthDef only needs registering once per engine load, not once per voice-class instance. Registering in `init` would call `.add` several times: harmless but wasteful. A single call from `Lied.init` does it once. The server is guaranteed to be alive at that point, so no `waitForBoot` is needed either.
 `─────────────────────────────────────────────────`
 
 ## Source sections (TriSin.sc specifically)
 
 1. Class declaration + ivars (lines 1-9)
-2. `*initClass` + SynthDef (lines 10-85)
-3. `*new` + `init` (lines 87-134)
-4. `playVoice` and `trigger` (lines 136-158)
-5. `adjustVoice` and `setParam` (lines 160-181)
-6. `freeAllNotes` and `free` (lines 183-189)
+2. `*initClass` + `*addSynthDefs` (lines 10-92)
+3. `*new` + `init` (lines 94-142)
+4. `playVoice` and `trigger` (lines 144-166)
+5. `adjustVoice` and `setParam` (lines 168-189)
+6. `freeAllNotes` and `free` (lines 191-197)
 
 ## 1. Class declaration and ivars
 
@@ -127,44 +129,46 @@ TriSin {
 
 **Lines 1-9**: class declaration + 5 instance variables matching the voice-pool pattern's template above.
 
-## 2. `*initClass` + SynthDef
+## 2. `*initClass` + `*addSynthDefs` (the SynthDef)
 
 ```supercollider
     *initClass {
         voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
-        StartUp.add {
-            var s = Server.default;
+    }
 
-            s.waitForBoot {
-
-                SynthDef("TriSin", {
-                    arg t_gate = 0,
-                        mRatio,
-                        cRatio,
-                        index,
-                        iScale,
-                        freq,
-                        cutoff,
-                        resonance,
-                        cutoff_env,
-                        attack,
-                        release,
-                        iattack,
-                        irelease,
-                        cAtk,
-                        cRel,
-                        ciAtk,
-                        ciRel,
-                        amp,
-                        pan,
-                        freq_slew,
-                        amp_slew,
-                        pan_slew,
-                        dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
-                        dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
+    // Added by Lied.init once Crone has booted the server — never from a
+    // StartUp hook, which runs at every sclang start and could boot scsynth
+    // before Crone had set it up.
+    *addSynthDefs {
+        SynthDef("TriSin", {
+            arg t_gate = 0,
+                mRatio,
+                cRatio,
+                index,
+                iScale,
+                freq,
+                hz_offset = 0,
+                cutoff,
+                resonance,
+                cutoff_env,
+                attack,
+                release,
+                iattack,
+                irelease,
+                cAtk,
+                cRel,
+                ciAtk,
+                ciRel,
+                amp,
+                pan,
+                freq_slew,
+                amp_slew,
+                pan_slew,
+                dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
+                dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 ```
 
-**Lines 10-42**: class init + SynthDef start. The TriSin SynthDef has **33 args** — by far the largest in the project.
+**Lines 10-43**: `*initClass` (just `voiceKeys`), then `*addSynthDefs` and the start of the SynthDef. The TriSin SynthDef has **34 args** — by far the largest in the project.
 
 The args, grouped:
 
@@ -176,7 +180,7 @@ The args, grouped:
   - `index` — FM modulation index (depth of the modulator).
   - `iScale` — scale factor for the index envelope (peak index = `index * iScale`).
 
-- **Pitch**: `freq` — base frequency in Hz.
+- **Pitch**: `freq` — base frequency in Hz; `hz_offset` — a fixed offset in Hz added to `freq` (default 0), for fine detuning and slow beating between cells.
 
 - **Filter**: `cutoff`, `resonance` — MoogFF lowpass.
 - **`cutoff_env`** — flag (0 or 1) for envelope-tracked cutoff.
@@ -190,31 +194,38 @@ The args, grouped:
 - **Bus + send levels**: 4 bus indices + 4 send levels.
 
 `★ Insight ─────────────────────────────────────`
-**33 args feels like a lot, but FM synthesis warrants it.** Each envelope needs four shape params (time + curve); we have two envelopes (volume + FM index). The frequency ratios need 2 args. The filter adds 3. The mix layer adds 6. The send layer adds 8. The sum lands at 33 — and removing any single arg would cost a meaningful control.
+**34 args feels like a lot, but FM synthesis warrants it.** Each envelope needs four shape params (time + curve); we have two envelopes (volume + FM index). The frequency ratios need 2 args. The pitch layer adds 2 (`freq`, `hz_offset`). The filter adds 3. The mix layer adds 6. The send layer adds 8. The sum lands at 34 — and removing any single arg would cost a meaningful control.
 `─────────────────────────────────────────────────`
 
 ```supercollider
-                    var car, mod, envelope, iEnv, filter, signal, ampSig;
-                    var slewed_freq = freq.lag3(freq_slew);
+            var car, mod, envelope, iEnv, filter, signal, ampSig;
+            var slewed_freq = max(0.1, freq + hz_offset).lag3(freq_slew);
 
-                    envelope = EnvGen.kr(
-                        envelope: Env(
-                            [0, 1, 0],
-                            times: [attack, release],
-                            curve: [cAtk, cRel]),
-                        gate: t_gate
-                    );
+            envelope = EnvGen.kr(
+                envelope: Env(
+                    [0, 1, 0],
+                    times: [attack, release],
+                    curve: [cAtk, cRel]),
+                gate: t_gate
+            );
 
-                    iEnv = EnvGen.kr(
-                        Env(
-                            [index, index * iScale, index],
-                            times: [iattack, irelease],
-                            curve: [ciAtk, ciRel]),
-                        gate: t_gate
-                    );
+            // Unity-shaped index envelope (0 → 1 → 0), scaled AFTER EnvGen.
+            // EnvGen latches each segment's target level when the segment
+            // starts, so levels [index, index*iScale, index] froze FM depth
+            // at note-on; mapping here keeps the same curve per note while
+            // index/iScale knob + LFO moves reach sounding notes. The short
+            // lag3 smooths 0.01-step knob/LFO updates (no zipper on depth).
+            iEnv = EnvGen.kr(
+                Env(
+                    [0, 1, 0],
+                    times: [iattack, irelease],
+                    curve: [ciAtk, ciRel]),
+                gate: t_gate
+            );
+            iEnv = index.lag3(0.05) * (1 + ((iScale.lag3(0.05) - 1) * iEnv));
 ```
 
-**Lines 44-60**: variable declarations, freq slewing, and two envelopes.
+**Lines 45-69**: variable declarations, freq offset + slewing, and two envelopes. `max(0.1, freq + hz_offset)` adds the Hz offset to the base frequency (clamped so it can never reach 0 or go negative) before `.lag3(freq_slew)` smooths pitch changes.
 
 `Env([0, 1, 0], times: [attack, release], curve: [cAtk, cRel])`:
 - Three breakpoints: 0 → 1 → 0.
@@ -225,14 +236,16 @@ This is an **AR (attack-release) envelope**, gated by `t_gate`. Setting `t_gate 
 
 **NO `doneAction: 2`** — important. The synth STAYS ALIVE after the envelope completes. The user can re-trigger the same Synth indefinitely. This is the **persistent voice** model.
 
-`iEnv` (FM index envelope) is similar but goes index → index*iScale → index. This sweeps the FM intensity during the note: low → high → low. If iScale = 5, the index temporarily hits 5x its base value mid-note. Sweeping the FM index produces the characteristic "evolving timbre" that gives TriSin its name.
+`iEnv` (FM index envelope) goes index → index*iScale → index. This sweeps the FM intensity during the note: low → high → low. If iScale = 5, the index temporarily hits 5x its base value mid-note. Sweeping the FM index produces the characteristic "evolving timbre" that gives TriSin its name.
+
+The EnvGen itself only produces the unity shape 0 → 1 → 0; `index` and `iScale` are applied afterwards. `EnvGen` reads each segment's target level only when that segment starts, so writing `levels: [index, index * iScale, index]` would freeze FM depth at note-on: turning the index/iScale knobs (or an LFO on them) would do nothing to a sounding note. Mapping after the EnvGen gives the identical curve per note while letting live changes through. The 50 ms `lag3` keeps 0.01-step knob/LFO updates from stepping audibly in the modulation depth.
 
 ```supercollider
-                    mod = SinOsc.ar(slewed_freq * mRatio, mul: slewed_freq * mRatio * iEnv);
-                    car = LFTri.ar(slewed_freq * cRatio + mod) * envelope;
+            mod = SinOsc.ar(slewed_freq * mRatio, mul: slewed_freq * mRatio * iEnv);
+            car = LFTri.ar(slewed_freq * cRatio + mod) * envelope;
 ```
 
-**Lines 62-63**: the FM construction.
+**Lines 71-72**: the FM construction.
 
 - **`mod`**: sine oscillator at frequency `freq × mRatio`. The `mul` (output gain) is `slewed_freq * mRatio * iEnv` — which is the FM modulation depth, scaling with the FM frequency AND the envelope. This is the classic FM-index-relative-to-frequency formula.
 - **`car`**: triangle oscillator at `freq × cRatio`, with `mod` added to its phase argument. Adding to the phase of an LFTri is how SC implements frequency modulation: the modulator's value perturbs the carrier's instantaneous phase. Then multiply by the volume envelope.
@@ -246,19 +259,19 @@ The `LFTri` carrier (triangle, not sine) is what gives TriSin its name: TRIangle
 `─────────────────────────────────────────────────`
 
 ```supercollider
-                    filter = MoogFF.ar(
-                        in: car,
-                        freq: Select.kr(cutoff_env > 0, [cutoff, cutoff * envelope]),
-                        gain: resonance
-                    );
+            filter = MoogFF.ar(
+                in: car,
+                freq: Select.kr(cutoff_env > 0, [cutoff, cutoff * envelope]),
+                gain: resonance
+            );
 
-                    signal = Pan2.ar(
-                        filter,
-                        pan.lag3(pan_slew)
-                    );
+            signal = Pan2.ar(
+                filter,
+                pan.lag3(pan_slew)
+            );
 ```
 
-**Lines 65-74**: filter and pan.
+**Lines 74-83**: filter and pan.
 
 `MoogFF.ar(in, freq, gain)` is a Moog ladder filter UGen with `freq` cutoff and `gain` resonance.
 
@@ -269,20 +282,18 @@ The `LFTri` carrier (triangle, not sine) is what gives TriSin its name: TRIangle
 This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter opens at the attack and closes at the release.
 
 ```supercollider
-                    ampSig = amp.lag3(amp_slew);
-                    Out.ar(dry_bus,    signal * ampSig * dry_send.lag3(0.05));
-                    Out.ar(reverb_bus, signal * ampSig * reverb_send.lag3(0.05));
-                    Out.ar(delay_bus,  signal * ampSig * delay_send.lag3(0.05));
-                    Out.ar(gran_bus,   signal * ampSig * granular_send.lag3(0.05));
-                }).add;
-            }
-        }
+            ampSig = amp.lag3(amp_slew);
+            Out.ar(dry_bus,    signal * ampSig * dry_send.lag3(0.05));
+            Out.ar(reverb_bus, signal * ampSig * reverb_send.lag3(0.05));
+            Out.ar(delay_bus,  signal * ampSig * delay_send.lag3(0.05));
+            Out.ar(gran_bus,   signal * ampSig * granular_send.lag3(0.05));
+        }).add;
     }
 ```
 
-**Lines 76-85**: post-fader amp and the four Y-shaped sends. Each `Out.ar` writes `signal × amp × send_level` to its FX bus.
+**Lines 85-91**: post-fader amp and the four Y-shaped sends. Each `Out.ar` writes `signal × amp × send_level` to its FX bus.
 
-`.add` at the end registers the SynthDef.
+`.add` at the end registers the SynthDef. The closing `}` of `*addSynthDefs` follows it directly (line 92); there is no `StartUp`/`waitForBoot` wrapper to unwind.
 
 ## 3. `*new` + `init`
 
@@ -298,6 +309,7 @@ This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter
 
         globalParams = Dictionary.newFrom([
             \freq, 400,
+            \hz_offset, 0,
             \mRatio, 1,
             \cRatio, 1,
             \index, 1,
@@ -337,7 +349,7 @@ This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter
     }
 ```
 
-**Lines 87-134**: constructor + initializer. `*new` is standard SC delegation to `init`.
+**Lines 94-142**: constructor + initializer. `*new` is standard SC delegation to `init`.
 
 `init`:
 - **`voiceGroup = Group.new(s)`** — outer group on the server.
@@ -381,7 +393,7 @@ Defaults worth noting:
     }
 ```
 
-**Lines 138-158**: trigger machinery.
+**Lines 144-166**: trigger machinery.
 
 `playVoice(voiceKey, freq)`: the **persistent voice retrigger pattern**.
 
@@ -421,7 +433,7 @@ As long as the synth exists, retriggering is just two `set` calls. Only the firs
     }
 ```
 
-**Lines 161-181**: param-setting.
+**Lines 168-189**: param-setting.
 
 `adjustVoice` sets the param on the single voice's subgroup (which broadcasts the set to any synth inside it — usually one synth) AND updates the cached param value (so future `Synth.new` uses it).
 
@@ -446,7 +458,7 @@ As long as the synth exists, retriggering is just two `set` calls. Only the firs
 }
 ```
 
-**Lines 183-189**: cleanup methods.
+**Lines 191-197**: cleanup methods.
 
 `freeAllNotes`:
 - **`voiceGroup.freeAll`** — frees every synth in the outer group + recursively in subgroups. Hard kill. The subgroups themselves stay alive.
@@ -487,7 +499,7 @@ You should hear a stack of FM tones, voice 1 separable from voices 2 and 3 becau
 
 ## Summary
 
-`TriSin.sc` is 190 lines defining a full-featured FM voice. The patterns established here apply (with variations) to all four voice classes:
+`TriSin.sc` is 198 lines defining a full-featured FM voice. The patterns established here apply (with variations) to all four voice classes:
 
 - **Persistent voice model**: no `doneAction: 2`. Each subgroup's Synth stays alive; retriggers via `set(\t_gate, 1)` are cheap.
 - **`isPlaying` branch for retrigger vs allocate**: only allocate when no synth exists for the voice key.

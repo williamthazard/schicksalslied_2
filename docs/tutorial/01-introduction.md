@@ -17,7 +17,7 @@ schicksalslied 2.0 is a script for [monome Norns](https://monome.org/docs/norns/
 The script has roughly 5,800 lines of code split across:
 
 - **Lua** (about 4,000 lines): control flow, UI, parameter management, MIDI, grid handling, sequencer state. Runs on the Norns's matron interpreter.
-- **SuperCollider** (about 1,800 lines): all DSP. Runs on the SuperCollider server (scsynth), supervised by Norns's Crone engine layer, which is in turn supervised by sclang.
+- **SuperCollider** (about 2,300 lines): all DSP. Runs on the SuperCollider server (scsynth), supervised by Norns's Crone engine layer, which is in turn supervised by sclang.
 
 When the tutorial is done, you'll have produced byte-for-byte equivalent files. Along the way you'll have understood every line.
 
@@ -25,9 +25,9 @@ When the tutorial is done, you'll have produced byte-for-byte equivalent files. 
 
 To make the scope concrete: when you finish chapter 11, your build will support all of the following simultaneously, with no editing or recompilation between mode switches:
 
-- A 16-cell row of voice synthesizers, each cell independently assignable to one of 11 roles (two SC-side voices: TriSin, Ringer; eight crow / Just Friends / w/ device roles; one MIDI-out role).
+- A 16-cell row of voice synthesizers, each cell independently assignable to one of 12 roles (three SC-side voices: Sine, TriSin, Ringer; eight crow / Just Friends / w/ device roles; one MIDI-out role).
 - 16 looping sampler slots, each with its own file, polyphony, sends, and per-cell trigger + rate sequencing.
-- 13 one-shot sample slots with the same per-slot architecture.
+- 12 one-shot sample slots with the same per-slot architecture, each loading either a single file or a whole folder of samples.
 - A 4-grain Carter's-Delay granular feedback loop with a mic input, voice send buses, and a feedback patch.
 - A 4-band master FX rack: tap delay (sync'd or free), Freeverb, and the granular chain as a third send destination.
 - Per-cell sequencer modes (lied / fixed / user_seq / random) and per-cell value modes for sampler position, duration, and rate.
@@ -61,8 +61,8 @@ Every layer in this script falls into exactly one of three tiers. Internalizing 
 └─────────────────────────────────────────────────────────────┘
                             ↕  method calls
 ┌─────────────────────────────────────────────────────────────┐
-│  DSP LAYER (SuperCollider, ~1700 lines)                     │
-│  lib/Lied.sc + lib/{TriSin,Ringer,Sampler,OneShot}.sc       │
+│  DSP LAYER (SuperCollider, ~2300 lines)                     │
+│  lib/Lied.sc + lib/{Sine,TriSin,Ringer,Sampler,OneShot}.sc │
 │                                                             │
 │  Owns: SynthDefs, voice management, audio buses, FX.        │
 │  May NOT: know anything about Lua, grids, or params.        │
@@ -95,6 +95,7 @@ schicksalslied/
 ├── lib/
 │   ├── Lied.sc                 ← the SC kernel: bus graph, FX, granular chain
 │   ├── Engine_Lied.sc          ← Crone wrapper: addCommand registrations
+│   ├── Sine.sc                 ← plain sine voice (the default row-2 role)
 │   ├── TriSin.sc               ← FM voice (triangle carrier, sine modulator)
 │   ├── Ringer.sc               ← pinged resonant filter voice
 │   ├── Sampler.sc              ← looping sample voice with split-buffer playback
@@ -118,7 +119,7 @@ schicksalslied/
 
 The split between `schicksalslied.lua` and `lib/*.lua` is informational, not architectural — Lua's `include` (a Norns idiom we'll discuss in chapter 06) glues them all together at load time. The top-level file is large (about 1,400 lines) because it owns the things that don't have a smaller, more focused home: the param tree definition, the grid input handler, the screen redraw routine, the MIDI device init, the PSET sidecar hook. Anything that's a coherent subsystem with a clear interface — sequencer state, role dispatch, voice param blocks, LFOs — lives in `lib/`.
 
-The `.sc` files split for a different reason: SuperCollider's class system. `Engine_Lied`, `Lied`, `TriSin`, `Ringer`, `Sampler`, and `OneShot` are each a class. Each class needs its own file. The split here is dictated by SC's compiler, not by an architectural choice.
+The `.sc` files split for a different reason: SuperCollider's class system. `Engine_Lied`, `Lied`, `Sine`, `TriSin`, `Ringer`, `Sampler`, and `OneShot` are each a class. (`Sine` has no chapter of its own: it is the simplest voice and follows the same structure as TriSin in chapter 05.) Each class needs its own file. The split here is dictated by SC's compiler, not by an architectural choice.
 
 ### Reading the tour as a learning path
 
@@ -147,7 +148,7 @@ The chapters in this tutorial are roughly grouped along this path, but rearrange
 
 Before we go deeper, here's the journey a single note takes from grid press to speaker. This trace is referenced throughout the rest of the tutorial; come back to it if you ever lose track of which layer is in play.
 
-**Setup state.** The user has pressed grid cell (1, 2) — column 1, row 2 — which has been configured (via the params menu, or by default) as a `TriSin` role. They've also typed a line and assigned it to that cell.
+**Setup state.** The user has pressed grid cell (1, 2) — column 1, row 2 — which has been configured (via the params menu; the default role is `Sine`) as a `TriSin` role. They've also typed a line and assigned it to that cell.
 
 **Step 1 (Control).** The user's grid press is delivered to `g.key(x, y, z)` in `schicksalslied.lua`. For a row-2 cell, this routes through a state param (`cell_1_2_state`) which calls `params:set` and fires that param's action.
 

@@ -1,6 +1,6 @@
 # Chapter 04 — `lib/Engine_Lied.sc`
 
-The Crone wrapper that exposes the `Lied` kernel to Norns. **140 lines of source, almost entirely `addCommand` registrations.**
+The Crone wrapper that exposes the `Lied` kernel to Norns. **about 190 lines of source, almost entirely `addCommand` registrations.** (Line ranges quoted below are approximate; search the source for the quoted code.)
 
 ## What you'll learn
 
@@ -35,13 +35,14 @@ Keeping them separate means the kernel is reusable. The `Lied` class could in pr
 2. Constructor (lines 7-9)
 3. `alloc` start + kernel construction (lines 11-12)
 4. Master FX commands (lines 14-26)
-5. Granular chain commands (lines 27-44)
-6. TriSin voice commands (lines 50-65)
-7. Ringer voice commands (lines 66-81)
-8. Sampler commands (lines 86-102)
-9. OneShot commands (lines 107-123)
-10. Bulk panic commands (lines 124-132)
-11. `free` (lines 137-139)
+5. Granular chain commands (lines 27-74)
+6. TriSin voice commands (lines 79-93)
+7. Ringer voice commands (lines 95-109)
+8. Sine voice commands (lines 111-125)
+9. Sampler commands (lines 128-147)
+10. OneShot commands (lines 150-173)
+11. Bulk panic commands + `free_granular` (lines 175-185)
+12. `free` (lines 188-190)
 
 ## 1. Class declaration and ivars
 
@@ -227,7 +228,6 @@ Three things vary across these calls:
 ```supercollider
         // --- Granular chain ---
         this.addCommand(\set_mic_amp,          "f", { arg msg; kernel.setMicAmp(msg[1]); });
-        this.addCommand(\set_mic_dry_amp,      "f", { arg msg; kernel.setMicDryAmp(msg[1]); });
         this.addCommand(\set_granular_out_amp, "f", { arg msg; kernel.setGranularOutAmp(msg[1]); });
         this.addCommand(\set_grain_delay_scale,"f", { arg msg; kernel.setGrainDelayScale(msg[1]); });
         this.addCommand(\set_fb_amp,           "f", { arg msg; kernel.setFbPatchAmp(msg[1]); });
@@ -236,20 +236,30 @@ Three things vary across these calls:
         this.addCommand(\set_fb_noise,         "f", { arg msg; kernel.setFbPatchNoiseLevel(msg[1]); });
         this.addCommand(\set_fb_sine_level,    "f", { arg msg; kernel.setFbPatchSineLevel(msg[1]); });
         this.addCommand(\set_fb_sine_hz,       "f", { arg msg; kernel.setFbPatchSineHz(msg[1]); });
-        this.addCommand(\free_granular,        "",  { arg msg; kernel.freeGranularChain; });
-
         this.addCommand(\set_grain_pan_rate,    "if", { arg msg; kernel.setGrainPanRate(msg[1].asInteger, msg[2]); });
         this.addCommand(\set_grain_cutoff_rate, "if", { arg msg; kernel.setGrainCutoffRate(msg[1].asInteger, msg[2]); });
         this.addCommand(\set_grain_res_rate,    "if", { arg msg; kernel.setGrainResRate(msg[1].asInteger, msg[2]); });
+
+        // --- Granular engine (freeze, buffer preservation, window, rates) ---
+        this.addCommand(\set_granular_freeze,        "i", { arg msg; kernel.setGranularFreeze(msg[1].asInteger); });
+        this.addCommand(\set_rec_pre_level,          "f", { arg msg; kernel.setRecPreLevel(msg[1]); });
+        this.addCommand(\set_grain_window,           "i", { arg msg; kernel.setGrainWindow(msg[1].asInteger); });
+        this.addCommand(\set_grain_sync_distribution,"f", { arg msg; kernel.setGrainSyncDistribution(msg[1]); });
+        this.addCommand(\set_grain_cutoff_ceiling,   "f", { arg msg; kernel.setGrainCutoffCeiling(msg[1]); });
+        this.addCommand(\set_grain_rate_mult,        "f", { arg msg; kernel.setGrainRateMult(msg[1]); });
+        this.addCommand(\set_grain_octaves,          "i", { arg msg; kernel.setGrainOctaves(msg[1].asInteger); });
+        this.addCommand(\set_grain_fifths,           "i", { arg msg; kernel.setGrainFifths(msg[1].asInteger); });
+        this.addCommand(\set_grain_suboctaves,       "i", { arg msg; kernel.setGrainSuboctaves(msg[1].asInteger); });
+        this.addCommand(\set_grain_reverse,          "i", { arg msg; kernel.setGrainReverse(msg[1].asInteger); });
 ```
 
-**Lines 27-44**: nine granular-chain setters + one no-arg `free_granular` + three per-grain modulation rate setters.
+**Lines 27-74**: the granular-chain setters: mic amp, granular out amp, the grain delay scale, six feedback-patch setters, three per-grain modulation rate setters, and ten "granular engine" commands (freeze, buffer preservation, window, sync distribution, cutoff ceiling, rate mult, and the octaves / fifths / sub-octaves / reverse switches). There is no mic-dry command any more (the old `set_mic_dry_amp` was removed with the dry-mic synth; col 16 now drives the norns LEVELS monitor from Lua). The no-arg `free_granular` is registered near the end of the file with the panic commands.
 
-Most granular commands are single floats. The `\set_fb_*` commands target the feedback patch synth.
+Most granular commands are single floats. The freeze / window / octaves / fifths / sub-octaves / reverse commands take an int (`"i"`; the Lua actions send `idx - 1`). The `\set_fb_*` commands target the feedback patch synth.
 
 The grain pan/cutoff/res rate setters take **two args**: an int (grain index, 0-3) and a float (the rate). The type spec is `"if"`. `msg[1].asInteger` defensively converts to int (Lua may send what looks like an integer as a float through OSC; `.asInteger` normalizes). `msg[2]` is the float, no conversion needed.
 
-`free_granular` takes no args and tears down the entire granular chain. Called from the Lua side via the K1 panic flow or when the user explicitly mutes the chain.
+`free_granular` (type spec `""`) takes no args and tears down the entire granular chain. Called from the Lua side via the K1 panic flow or when the user explicitly mutes the chain.
 
 ## 6. TriSin voice commands
 
@@ -318,7 +328,25 @@ If you tried `msg[2].asSymbol` directly on a float, you'd get `\3.0` (not `\3`),
 
 The duplication is intentional. Abstracting it (e.g., a helper that generates pairs of `<role>_alloc` / `<role>_free` commands) would obscure the structure. Each role's commands stand on their own.
 
-## 8. Sampler commands
+## 8. Sine voice commands
+
+```supercollider
+        this.addCommand(\sine_alloc, "s", { arg msg; kernel.allocSine(msg[1].asSymbol); });
+        this.addCommand(\sine_free, "s", { arg msg; kernel.freeSine(msg[1].asSymbol); });
+        this.addCommand(\sine_trigger, "sif", { arg msg;
+            var cellId = msg[1].asSymbol;
+            var voiceKey = msg[2].asInteger.asString.asSymbol;
+            var freq = msg[3];
+            kernel.triggerSine(cellId, voiceKey, freq);
+        });
+        this.addCommand(\sine_set_param, "ssf", { arg msg;
+            kernel.setSineParam(msg[1].asSymbol, msg[2].asSymbol, msg[3]);
+        });
+```
+
+**Lines 111-125**: four Sine commands, identical in shape to the TriSin and Ringer sets (`sine_alloc` / `sine_free` / `sine_trigger` / `sine_set_param`). Sine is the default role of every row-2 cell, so these are the first voice commands the Lua side calls at boot.
+
+## 9. Sampler commands
 
 ```supercollider
         // -----------------------------------------------------------------
@@ -353,33 +381,42 @@ The duplication is intentional. Abstracting it (e.g., a helper that generates pa
 
 `msg[1].asInteger` converts the slot to int. Compare to TriSin's `msg[1].asSymbol` for cell ID — samplers identify by integer slot, voices identify by string cell ID. Different code paths, different conversions.
 
-## 9. OneShot commands
+## 10. OneShot commands
 
 ```supercollider
         // -----------------------------------------------------------------
-        // OneShot instance lifecycle (per row-8 slot, integer 1-13)
+        // OneShot instance lifecycle (per row-8 slot, integer 1-12)
         // -----------------------------------------------------------------
 
         this.addCommand(\oneshot_load, "is", { arg msg;
             kernel.loadOneShot(msg[1].asInteger, msg[2].asString);
         });
+        // Second arg: newline-separated file paths (Lua scans the folder).
+        this.addCommand(\oneshot_load_files, "is", { arg msg;
+            kernel.loadOneShotFiles(msg[1].asInteger, msg[2].asString);
+        });
         this.addCommand(\oneshot_clear, "i", { arg msg;
             kernel.clearOneShot(msg[1].asInteger);
         });
-        this.addCommand(\oneshot_trigger, "iif", { arg msg;
+        this.addCommand(\oneshot_trigger, "iifif", { arg msg;
             var slot = msg[1].asInteger;
             var voiceKey = msg[2].asInteger.asString.asSymbol;
             var rate = msg[3];
-            kernel.triggerOneShot(slot, voiceKey, rate);
+            var bufIdx = msg[4].asInteger;
+            var ampScale = msg[5];
+            kernel.triggerOneShot(slot, voiceKey, rate, bufIdx, ampScale);
         });
         this.addCommand(\oneshot_set_param, "isf", { arg msg;
             kernel.setOneShotParam(msg[1].asInteger, msg[2].asSymbol, msg[3]);
         });
 ```
 
-**Lines 107-123**: four one-shot commands. Same shape as sampler but with `\oneshot_trigger` taking only 3 args (`"iif"`) — slot, voice key, rate. No start/end because OneShot plays the whole buffer.
+**Lines 150-173**: five one-shot commands. Same shape as sampler, with two differences:
 
-## 10. Bulk panic commands
+- **`\oneshot_load_files`** (`"is"`) loads a whole folder into one slot. It replaced an earlier `oneshot_load_folder` that scanned the directory on the SC side. Now **Lua builds the file list**: the second argument is a **newline-separated string of absolute paths** (sorted, filtered and budgeted by `load_oneshot_folder` in chapter 13), and `kernel.loadOneShotFiles` splits it on `$\n`. Lua's file count and order are therefore exactly what the trigger's buffer index selects. An empty list clears the slot. (Paths containing a newline would break this format; Lua skips such files.)
+- **`\oneshot_trigger`** takes five args (`"iifif"`): slot, voice key, rate, **buffer index** (which file of the folder to play) and **amp scale** (the accent multiplier). There's no start/end because OneShot plays the whole buffer.
+
+## 11. Bulk panic commands
 
 ```supercollider
         this.addCommand(\silence_all_samplers, "", { arg msg;
@@ -388,21 +425,25 @@ The duplication is intentional. Abstracting it (e.g., a helper that generates pa
         this.addCommand(\silence_all_oneshots, "", { arg msg;
             kernel.silenceAllOneShots;
         });
+        this.addCommand(\free_granular, "", { arg msg;
+            kernel.freeGranularChain;
+        });
 
         "Engine_Lied alloc complete.".postln;
     }
 ```
 
-**Lines 124-134**: two no-arg commands (type spec `""`).
+**Lines 175-185**: three no-arg commands (type spec `""`).
 
 - **`\silence_all_samplers`** — calls `kernel.silenceAllSamplers` (which iterates the instance dict and calls `resetVoices` on each).
 - **`\silence_all_oneshots`** — same for one-shots.
+- **`\free_granular`** — tear down the granular chain (`kernel.freeGranularChain`).
 
 The handler body is just `kernel.<method>` — no `(...)` because SC's method-call syntax doesn't require parens for zero-arg calls.
 
 The final `.postln` is the signal that the engine is fully alive. After this message appears in the matron log, the Lua side can start sending commands with confidence.
 
-## 11. `free`
+## 12. `free`
 
 ```supercollider
     free {
@@ -411,7 +452,7 @@ The final `.postln` is the signal that the engine is fully alive. After this mes
 }
 ```
 
-**Lines 137-140**: when Norns unloads the engine (script changes, Norns shuts down, etc.), `free` is called. Forward to `kernel.free`, which tears down everything in `Lied.sc` ([chapter 03](03-Lied.sc.md) section 18). The Crone wrapper itself has no state to free beyond the kernel reference.
+**Lines 188-190**: when Norns unloads the engine (script changes, Norns shuts down, etc.), `free` is called. Forward to `kernel.free`, which tears down everything in `Lied.sc` ([chapter 03](03-Lied.sc.md) section 18). The Crone wrapper itself has no state to free beyond the kernel reference.
 
 ## What happens when the Lua side calls an engine command
 
