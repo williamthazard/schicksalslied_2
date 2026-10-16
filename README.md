@@ -1,4 +1,4 @@
-# schicksalslied 2.1
+# schicksalslied 2
 
 a poetry sequencer for monome norns
 
