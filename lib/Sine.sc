@@ -6,6 +6,7 @@ Sine {
     var <voiceParams;
     var <voiceGroup;
     var <singleVoices;
+    var voiceSynths;    // voiceKey -> Synth; it pauses itself when silent
 
     *initClass {
         voiceKeys = [\1, \2, \3, \4, \5, \6, \7, \8];
@@ -31,7 +32,7 @@ Sine {
                 dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
                 dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 
-            var sig, signal, envelope, ampSig;
+            var sig, signal, envelope, ampSig, paused;
             var slewed_freq = max(0.1, freq + hz_offset).lag3(freq_slew);
 
             envelope = EnvGen.kr(
@@ -43,10 +44,11 @@ Sine {
             );
 
             sig = SinOsc.ar(slewed_freq) * envelope;
+            paused = Lied.pauseWhenSilent(t_gate, attack + release, sig);
 
             signal = Pan2.ar(
                 sig,
-                pan.lag3(pan_slew)
+                Lied.notePan(pan, pan_slew, t_gate, paused)
             );
 
             // Post-fader: amp scales all 4 sends
@@ -89,6 +91,7 @@ Sine {
             \granular_send, 0,
         ]);
         singleVoices = Dictionary.new;
+        voiceSynths = Dictionary.new;
         voiceParams = Dictionary.new;
         voiceKeys.do({
             arg voiceKey;
@@ -103,11 +106,20 @@ Sine {
         arg voiceKey, freq;
         if (singleVoices[voiceKey].isPlaying, {
             voiceParams[voiceKey][\freq] = freq;
-            singleVoices[voiceKey].set(\freq, freq, \t_gate, 1);
+            // The voice pauses itself once silent (Lied.pauseWhenSilent);
+            // resume it in the same bundle as the retrigger.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey].run(true);
+                singleVoices[voiceKey].set(\freq, freq, \t_gate, 1);
+            });
         }, {
             voiceParams[voiceKey][\freq] = freq;
-            Synth.new("Sine", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
-            singleVoices[voiceKey].set(\t_gate, 1);
+            // One bundle, so the first trigger lands in the synth's first
+            // block: a separate later message could find it paused.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey] = Synth.new("Sine", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
+                singleVoices[voiceKey].set(\t_gate, 1);
+            });
             NodeWatcher.register(singleVoices[voiceKey], true);
         });
     }

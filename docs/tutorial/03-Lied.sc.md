@@ -1,6 +1,6 @@
 # Chapter 03 — `lib/Lied.sc`
 
-The SC kernel that owns all DSP for schicksalslied 2.0. **about 1,180 source lines** — the largest SC file in the project, and the most architecturally dense. (The `Lines N-M` annotations below were written against an earlier, shorter revision and are approximate; search for the quoted code in `lib/Lied.sc` rather than jumping to the line number.)
+The SC kernel that owns all DSP for schicksalslied 2.0. **about 1,250 source lines** — the largest SC file in the project, and the most architecturally dense. (The `Lines N-M` annotations below were written against an earlier, shorter revision and are approximate; search for the quoted code in `lib/Lied.sc` rather than jumping to the line number.)
 
 If you've worked through chapters 01-02 you have everything you need to start. We'll build this file top-to-bottom: class skeleton, then the four-bus + three-group audio architecture, then the master FX SynthDefs, then the granular chain (lazily allocated when first needed), then voice instance management for the five voice classes (Sine, TriSin, Ringer, Sampler, OneShot). By the end of the chapter your class compiles, instantiates, and routes audio cleanly — but it won't yet be reachable from Norns (that's the next chapter's job).
 
@@ -389,29 +389,35 @@ The end result: turn up the amp and the granular chain self-modulates with the s
                 grainEnv = (-1), ptrBus = 0, ptrSampleDelay = 20000,
                 ptrRandSamples = 5000, minPtrDelay = 1000,
                 cutoff = 12000, cutoffMax = 16000, resonance = 1;
-            var sig, env, grainTrigger, durCtrl, rateCtrl, panCtrl,
-                ptr, ptrRand, totalDelay, maxGrainDur;
+            var sig, env, grainTrigger, durCtrl, rateCtrl, panCtrl;
+            var ptr, ptrRand, totalDelay, maxGrainDur;
             env = EnvGen.kr(Env.asr(atk, 1, rel), gate, doneAction: 2);
             grainTrigger = CoinGate.ar(sync.clip(0, 1), Impulse.ar(dens)) + CoinGate.ar(1 - sync.clip(0, 1), Dust.ar(dens));
-            durCtrl = baseDur * LFNoise1.ar(100).exprange(1 / durRand, durRand);
-            rateCtrl = rate.lag3(0.5) * LFNoise1.ar(100).exprange(1 / rateRand, rateRand);
+            // Control rate is plenty: GrainBuf only reads dur/rate/pos when a
+            // grain starts (these were audio rate; ~1/3 of the grain cost).
+            durCtrl = baseDur * LFNoise1.kr(100).exprange(1 / durRand, durRand);
+            rateCtrl = rate.lag3(0.5) * LFNoise1.kr(100).exprange(1 / rateRand, rateRand);
             panCtrl = pan + LFNoise1.kr(100).bipolar(panRand);
-            ptrRand = LFNoise1.ar(100).bipolar(ptrRandSamples);
+            ptrRand = LFNoise1.kr(100).bipolar(ptrRandSamples);
             totalDelay = max(ptrSampleDelay - ptrRand, minPtrDelay);
             ptr = In.ar(ptrBus, 1);
             ptr = ptr - totalDelay;
             ptr = ptr / BufFrames.kr(buf);
             maxGrainDur = (totalDelay / rateCtrl.abs) / SampleRate.ir;
             durCtrl = min(durCtrl, maxGrainDur);
+            // Mono grains, filtered once, then panned: half the MoogFF cost of
+            // filtering a stereo pair (MoogFF is about half the grain cost).
+            // The pan LFO now moves the whole grain stream smoothly instead
+            // of placing each grain where the LFO was when it started.
             sig = GrainBuf.ar(
-                2,
+                1,
                 grainTrigger,
                 durCtrl,
                 buf,
                 rateCtrl,
                 ptr,
                 4,
-                panCtrl,
+                0,
                 grainEnv
             );
             sig = MoogFF.ar(
@@ -419,30 +425,30 @@ The end result: turn up the amp and the granular chain self-modulates with the s
                 freq: min(cutoff, cutoffMax).clip(50, 18000),
                 gain: resonance.clip(0, 4)
             );
-            Out.ar(out, sig);
+            Out.ar(out, Pan2.ar(sig, panCtrl));
         }).add;
 ```
 
-**Lines 172-214**: the grain reader, the heart of the granular chain. This deserves a careful walk:
+**Lines 185-232**: the grain reader, the heart of the granular chain. This deserves a careful walk:
 
 - **`env = EnvGen.kr(Env.asr(atk, 1, rel), gate, doneAction: 2)`** — an ASR envelope. The synth lives until the envelope hits 0 (gate goes low and release completes), then frees itself.
 - **`grainTrigger = CoinGate.ar(sync, Impulse.ar(dens)) + CoinGate.ar(1 - sync, Dust.ar(dens))`** — the grain trigger stream. `sync` (0-1, the **grain sync distribution** param) is a probability that decides, trigger by trigger, between `Impulse.ar(dens)` (regular, synchronized pulses) and `Dust.ar(dens)` (random Poisson-distributed pulses). `sync = 1` (default) is all Impulse, `0` is all Dust, in between is a mix of both. `dens` is kept equal to `1 / (grainDur × |rate|)`, set at allocation and again by `applyTapRates` whenever the rates change.
-- **`durCtrl = baseDur * LFNoise1.ar(100).exprange(1 / durRand, durRand)`** — grain duration with random variation. `LFNoise1.ar(100)` is a 100 Hz random walk; `.exprange(min, max)` maps it exponentially to `[1/durRand, durRand]`. Multiplying `baseDur` by this produces a duration that varies exponentially around `baseDur`.
-- **`rateCtrl = rate.lag3(0.5) * LFNoise1.ar(100).exprange(...)`** — playback rate with random variation. Same pattern but with `.lag3(0.5)` smoothing on the central rate (so user rate changes don't click).
-- **`panCtrl = pan + LFNoise1.kr(100).bipolar(panRand)`** — stereo pan with random variation. `bipolar(panRand)` maps the random walk to `[-panRand, +panRand]`.
-- **`ptrRand = LFNoise1.ar(100).bipolar(ptrRandSamples)`** — random offset (in samples) added to the lookback distance, producing position variation between grains.
+- **`durCtrl = baseDur * LFNoise1.kr(100).exprange(1 / durRand, durRand)`** — grain duration with random variation. `LFNoise1.kr(100)` is a 100 Hz random walk (at control rate: `GrainBuf` only reads duration, rate and position at the instant a grain starts, so audio-rate noise was wasted work, about a third of the grain cost); `.exprange(min, max)` maps it exponentially to `[1/durRand, durRand]`. Multiplying `baseDur` by this produces a duration that varies exponentially around `baseDur`.
+- **`rateCtrl = rate.lag3(0.5) * LFNoise1.kr(100).exprange(...)`** — playback rate with random variation. Same pattern but with `.lag3(0.5)` smoothing on the central rate (so user rate changes don't click).
+- **`panCtrl = pan + LFNoise1.kr(100).bipolar(panRand)`** — stereo pan with random variation. `bipolar(panRand)` maps the random walk to `[-panRand, +panRand]`. It is applied at the very end by `Pan2` (see below), so the whole grain stream sweeps smoothly with the LFO.
+- **`ptrRand = LFNoise1.kr(100).bipolar(ptrRandSamples)`** — random offset (in samples) added to the lookback distance, producing position variation between grains.
 - **`totalDelay = max(ptrSampleDelay - ptrRand, minPtrDelay)`** — the actual lookback distance for THIS grain at THIS moment. Clamped to a minimum to prevent reading too close to the write head.
 - **`ptr = In.ar(ptrBus, 1); ptr = ptr - totalDelay; ptr = ptr / BufFrames.kr(buf)`** — read the write-head position, back it up by `totalDelay`, normalize to 0-1 (GrainBuf expects normalized positions).
 - **`maxGrainDur = (totalDelay / rateCtrl.abs) / SampleRate.ir; durCtrl = min(durCtrl, maxGrainDur)`** — cap the grain duration so the grain doesn't outrun the write head. If a grain plays for longer than `totalDelay / |rate|` seconds, it would catch up to the write head and play data that hasn't been written yet (or is currently being overwritten). The cap prevents this.
-- **`GrainBuf.ar(2, grainTrigger, durCtrl, buf, rateCtrl, ptr, 4, panCtrl, grainEnv)`** — the actual grain reader. 2-channel output, density trigger, duration, buffer, rate, position, interpolation (4 = cubic), pan, env (-1 = built-in Hann window, otherwise a custom window buffer; see the grain window param).
-- **`MoogFF.ar(...)`** — apply a resonant lowpass filter to the grain output. `cutoff` (driven by a per-grain LFO Ndef) is capped at `cutoffMax` (the **grain cutoff ceiling** param), and `resonance` is clipped to 0-4.
+- **`GrainBuf.ar(1, grainTrigger, durCtrl, buf, rateCtrl, ptr, 4, 0, grainEnv)`** — the actual grain reader. **Mono** output (the delay buffer is read as one channel and `GrainBuf`'s own pan argument is 0), density trigger, duration, buffer, rate, position, interpolation (4 = cubic), pan, env (-1 = built-in Hann window, otherwise a custom window buffer; see the grain window param).
+- **`MoogFF.ar(...)`** — apply a resonant lowpass filter to the (mono) grain output. One filter instead of two, which halves the cost of what is the most expensive UGen in the synth. `cutoff` (driven by a per-grain LFO Ndef) is capped at `cutoffMax` (the **grain cutoff ceiling** param), and `resonance` is clipped to 0-4.
 - A negative `rate` plays the grain backwards (the **grain reverse** param flips every other grain's rate negative).
-- **`Out.ar(out, sig)`** — write the filtered grains to `out` (typically dryBus).
+- **`Out.ar(out, Pan2.ar(sig, panCtrl))`** — pan the filtered mono grains with `panCtrl` and write the stereo result to `out` (typically dryBus). Before, `GrainBuf` panned each grain at its start using whatever the pan LFO read at that moment and the stereo pair then went through two filters; panning after the filter moves the whole stream continuously and costs one `MoogFF`.
 
 `★ Insight ─────────────────────────────────────`
 **`GrainBuf` does the heavy lifting**: it's a built-in SC UGen that handles grain envelope shaping, scheduling, and reading from a buffer at randomized positions. Without `GrainBuf` we'd need to manually trigger individual grain players and overlap their envelopes, which would be much harder to write and likely slower. Always reach for the built-in granular UGens (GrainBuf, GrainIn, GrainSin, GrainFM) before rolling your own.
 
-**The `LFNoise1.ar(100).exprange(...)` pattern** for randomized parameters is canonical for granular synthesis. `LFNoise1` is "low-frequency noise with linear interpolation" — at 100 Hz it produces a smoothly-varying random signal. `exprange` maps it to the desired range with exponential bias (so values cluster near the geometric mean). The combination produces natural-feeling parameter motion that doesn't sound robotic.
+**The `LFNoise1.kr(100).exprange(...)` pattern** for randomized parameters is canonical for granular synthesis. `LFNoise1` is "low-frequency noise with linear interpolation" — at 100 Hz it produces a smoothly-varying random signal. `exprange` maps it to the desired range with exponential bias (so values cluster near the geometric mean). The combination produces natural-feeling parameter motion that doesn't sound robotic.
 `─────────────────────────────────────────────────`
 
 ### `\liedGranSend`
@@ -459,7 +465,7 @@ The end result: turn up the amp and the granular chain self-modulates with the s
         }).add;
 ```
 
-**Lines 216-224**: a small mixer that sums the stereo granular send bus to mono with 0.5 gain, then writes the mono result to micBus (where the granular chain reads it). This is what lets voices route into the granular chain via their `granular_send` send level: any voice's granular_send writes to granularBus; `liedGranSend` mixes granularBus → micBus.
+**Lines 234-242**: a small mixer that sums the stereo granular send bus to mono with 0.5 gain, then writes the mono result to micBus (where the granular chain reads it). This is what lets voices route into the granular chain via their `granular_send` send level: any voice's granular_send writes to granularBus; `liedGranSend` mixes granularBus → micBus.
 
 The 0.5 gain is the mono-mix normalization (so a stereo signal of (L=1, R=1) becomes mono signal 1.0, not 2.0).
 
@@ -480,6 +486,37 @@ The 0.5 gain is the mono-mix normalization (so a stereo signal of (L=1, R=1) bec
 `★ Insight ─────────────────────────────────────`
 **On norns, only Crone may boot the server.** Crone's own startup clears `SC_JACK_DEFAULT_INPUTS`/`OUTPUTS`, boots scsynth, and then connects it to JACK. A `StartUp.add { Server.default.waitForBoot { ... } }` hook inside a class library file runs at *every* sclang start, whatever script is loaded, and can fire before Crone's own hook, booting scsynth un-configured. The visible symptom is an intermittent `SUPERCOLLIDER FAIL` / `AUDIO ENGINE FAIL` after SYSTEM > RESTART (which restarts sclang but leaves JACK running). Moving the `.add` calls into `Lied.init` means this script never touches server boot, so a plain norns restart just works.
 `─────────────────────────────────────────────────`
+
+### Voice helpers: `Lied.pauseWhenSilent` and `Lied.notePan`
+
+The voice SynthDefs call two small class methods defined in the "Voice SynthDef helpers" section of `Lied.sc` (just before the shared sample-buffer cache). They exist because the voices are **persistent**: one `Synth` per voice key, retriggered forever and never freed (chapter 05). A persistent synth whose note has ended still runs its whole graph every block (oscillators, `MoogFF`, `Amplitude`, four `Out`s, all writing zeros). With 16 cells plus samplers that idle cost adds up.
+
+```supercollider
+    *pauseWhenSilent { arg trig, length, sig;
+        var paused = (Sweep.kr(trig) > length) * (Amplitude.kr(sig).asArray.sum < 1e-4);
+        PauseSelf.kr(paused);
+        ^paused
+    }
+
+    *notePan { arg pan, slew, trig, paused;
+        ^pan.lag3(slew * (1 - (Trig1.kr(trig, ControlDur.ir) * Delay1.kr(paused))));
+    }
+```
+
+**`pauseWhenSilent(trig, length, sig)`** makes the enclosing synth pause itself: `PauseSelf.kr(paused)` pauses (does not free) the synth it is in when `paused` turns true. It also **returns** `paused`, so `notePan` can use it. `paused` is true only when both conditions hold:
+
+- `Sweep.kr(trig) > length`: time since the last trigger exceeds `length`, the time the note needs to finish. `Sweep` is a ramp in seconds that restarts from 0 at each trigger. `length` is `attack + release` for Sine and TriSin, the `duration` argument for Sampler (region length x loops / rate), and `len` (`BufDur.kr(buf) / rate.abs`, kept finite at rate 0) for OneShot.
+- `Amplitude.kr(sig).asArray.sum < 1e-4`: the **pre-amp** signal (-80 dB) has actually died away. `sig` is Sine's `sig`, TriSin's post-filter `filter`, Sampler's enveloped `filtered`, OneShot's `filter`. `.asArray.sum` makes it work for mono and stereo signals alike.
+
+Neither condition is enough alone. Time alone would pause a voice while a filter still rings, and a self-oscillating `MoogFF` (high resonance) never goes quiet, so it correctly never pauses. Silence alone would pause a sample during a quiet gap in the middle of its playback. The signal is measured before `amp` is applied, so turning the fader down does not make a voice pause early, and a voice with the fader at 0 still pauses once its note is done.
+
+**Resuming.** A paused synth ignores `set` triggers until it is run again. So every voice class's retrigger path sends one bundle, `Server.default.makeBundle(nil, { synth.run(true); group.set(..., \t_gate, 1) })`: `n_run` and the trigger arrive at the same time stamp, and the synth wakes up and sees the trigger on its first block. The `Synth` handle comes from `voiceSynths` (`voiceKey -> Synth`, filled when the voice is first created); `n_run` on an already-running synth is harmless. Creating a voice works the same way: the first-note branch of each class wraps `Synth.new(...)` and the first `group.set(..., \t_gate, 1)` in one `makeBundle`, so the trigger lands in the synth's first block. (As a separate message it could arrive after a very short note had already paused the synth, and the note was lost.) The Sampler and OneShot `resetVoices` (panic) frees the subgroups, which frees their synths, and drops the handles (`voiceSynths.removeAt`), so the next trigger creates fresh ones.
+
+**Why `PauseSelf`.** It pauses in the same control block the condition turns true. On resume, the bundle's trigger resets `Sweep` in the first block, which drops the condition to 0 and re-arms `PauseSelf` for the next note. Two alternatives were tried. `DetectSilence` keeps its own silence timer, which still reads "silent" when the voice wakes, so it re-paused at once and swallowed the note. An `EnvGen` with `doneAction: 1` re-arms but acts one block late: a trigger landing in that block (about 1.3 ms after the pause point) was consumed, and then the synth paused anyway, dropping the note. Offline renders at 48 kHz with 120 retriggers aimed at that window: the `EnvGen` version dropped 2 notes, `PauseSelf` none.
+
+**`notePan(pan, slew, trig, paused)`** is the pan used by Sine, TriSin, Sampler and OneShot. `paused` is the value `pauseWhenSilent` returned. A plain `pan.lag3(pan_slew)` has a problem with paused voices: the lag stops tracking while the synth is paused, so a note that wakes after a long pause starts at a stale position and glides across from there. `notePan` multiplies the slew time by `1 - (Trig1.kr(trig, ControlDur.ir) * Delay1.kr(paused))`. `Trig1` is 1 for one control block after each trigger. `Delay1` holds `paused` back by one block, so it still reads 1 on the first block after a resume (the synth did not run while paused). The product is 1 only on the block that **resumes a paused voice**. For that block the lag time is 0 and the pan **snaps to its current value**.
+
+A note that retriggers a voice that is **still sounding** does not snap: `paused` is 0, so the pan keeps slewing. An earlier version snapped on every trigger, which jumped a ringing tail across the stereo field within one 64-sample block, and that clicked. After the snap block, `pan` changes (a knob turn, an LFO) are smoothed again **while the note sounds**: a note can start in the left speaker and audibly swing to the right as it decays.
 
 ## Instantiating the master FX (where order matters)
 
@@ -1050,7 +1087,7 @@ Besides the amp and LFO setters, the kernel exposes the "granular engine" contro
 
 ## Per-cell Sine lifecycle
 
-`allocSine`, `freeSine`, `triggerSine` and `setSineParam` mirror the TriSin lifecycle exactly (`sineInstances`, `pendingSineParams`, `Sine.new(dryBus, reverbBus, delayBus, granularBus)`). Sine is the simplest voice and the default role of all 16 row-2 cells; its source is `lib/Sine.sc` (same voice-class structure as chapters 05-06).
+`allocSine`, `freeSine`, `triggerSine` and `setSineParam` mirror the TriSin lifecycle exactly (`sineInstances`, `pendingSineParams`, `Sine.new(dryBus, reverbBus, delayBus, granularBus)`). Sine is the simplest voice and the default role of all 16 row-2 cells; its source is `lib/Sine.sc` (same voice-class structure as chapters 05-06). Its SynthDef is TriSin's with the FM stripped out: `sig = SinOsc.ar(slewed_freq) * envelope`, then `paused = Lied.pauseWhenSilent(t_gate, attack + release, sig)` and `Pan2.ar(sig, Lied.notePan(pan, pan_slew, t_gate, paused))`. Like every persistent voice it keeps its `Synth` in `voiceSynths`, pauses itself when silent and is resumed in the same bundle as each retrigger (see Voice helpers).
 
 ## Per-cell TriSin lifecycle
 
@@ -1074,7 +1111,7 @@ Besides the amp and LFO setters, the kernel exposes the "granular engine" contro
     }
 ```
 
-**Lines 570-587**: allocate a TriSin instance for `cellId`. The `isNil` check makes this idempotent. After construction:
+**Lines 715-732**: allocate a TriSin instance for `cellId`. The `isNil` check makes this idempotent. After construction:
 
 - **`TriSin.new(dryBus.index, reverbBus.index, delayBus.index, granularBus.index)`** — pass the four bus indices so the TriSin instance knows where to route audio.
 - **Apply pending params** — `pendingTriSinParams[cellId].keysValuesDo({ |k, v| ... })` iterates the pending dict; for each key-value pair, call `setParam('all', k, v)` on the new instance (which broadcasts to all 8 voices).
@@ -1093,7 +1130,7 @@ Besides the amp and LFO setters, the kernel exposes the "granular engine" contro
     }
 ```
 
-**Lines 589-597**: free. Standard pattern: look up, free if exists, nil the references.
+**Lines 734-742**: free. Standard pattern: look up, free if exists, nil the references.
 
 ```supercollider
     triggerTriSin { arg cellId, voiceKey, freq;
@@ -1104,7 +1141,7 @@ Besides the amp and LFO setters, the kernel exposes the "granular engine" contro
     }
 ```
 
-**Lines 599-604**: trigger. Idiomatic null-check.
+**Lines 744-749**: trigger. Idiomatic null-check.
 
 ```supercollider
     setTriSinParam { arg cellId, paramKey, paramValue;
@@ -1120,7 +1157,7 @@ Besides the amp and LFO setters, the kernel exposes the "granular engine" contro
     }
 ```
 
-**Lines 606-617**: setParam with pending caching. Two branches:
+**Lines 751-762**: setParam with pending caching. Two branches:
 
 - **Instance exists**: forward to `inst.setParam('all', ...)`.
 - **No instance yet**: lazy-create the per-cell pending dict, store the value.
@@ -1136,13 +1173,13 @@ Besides the amp and LFO setters, the kernel exposes the "granular engine" contro
     setRingerParam { arg cellId, paramKey, paramValue; ... }
 ```
 
-**Lines 619-670**: parallel to TriSin's lifecycle, just operating on `ringerInstances` and `pendingRingerParams` instead. The code is essentially identical except for the class name (`Ringer.new` vs `TriSin.new`) and the dict references.
+**Lines 768-815**: parallel to TriSin's lifecycle, just operating on `ringerInstances` and `pendingRingerParams` instead. The code is essentially identical except for the class name (`Ringer.new` vs `TriSin.new`) and the dict references.
 
 This duplication is intentional. Abstracting it (e.g., a generic `allocVoice(class, cellId, ...)`) would add an indirection layer that the Lua-side `engine.<role>_alloc` calls don't benefit from. Keeping them separate is more readable and easier to specialize per-class if needed.
 
 ## Shared sample-buffer cache (samplers and one-shots)
 
-Looping samplers and one-shots load audio the same way, through one set of helpers (`lib/Lied.sc` lines 855-958). Both voices share a single cache, so the same file loaded into a sampler and a one-shot costs one buffer.
+Looping samplers and one-shots load audio the same way, through one set of helpers (`lib/Lied.sc` lines 903-1003). Both voices share a single cache, so the same file loaded into a sampler and a one-shot costs one buffer.
 
 ```supercollider
     bumpGen { arg gens, slot;
@@ -1151,7 +1188,7 @@ Looping samplers and one-shots load audio the same way, through one set of helpe
     }
 ```
 
-**`bumpGen`** (line 873): bump and return a slot's generation counter. There are two counter dictionaries, `samplerLoadGen` and `oneShotLoadGen`, and the helper takes whichever one applies. Every load **and every clear** calls it. A load fork remembers the number it was given; if the counter has moved on by the time the fork finishes, a newer request exists and this one is stale. `Lied.free` bumps every slot of both dictionaries too, so no load can install onto freed buses.
+**`bumpGen`** (line 920): bump and return a slot's generation counter. There are two counter dictionaries, `samplerLoadGen` and `oneShotLoadGen`, and the helper takes whichever one applies. Every load **and every clear** calls it. A load fork remembers the number it was given; if the counter has moved on by the time the fork finishes, a newer request exists and this one is stale. `Lied.free` bumps every slot of both dictionaries too, so no load can install onto freed buses.
 
 ```supercollider
     sampleFileOk { arg label, slot, filePath;
@@ -1172,7 +1209,7 @@ Looping samplers and one-shots load audio the same way, through one set of helpe
     }
 ```
 
-**`sampleFileOk`** (line 880): the pre-flight check, shared by both voices. `SoundFile.openRead` reads only the header; `nil` means the file can't be opened. `duration = numFrames / sampleRate` is checked against the 600 s (10 minute) cap, and `sf.close` releases the handle (`Buffer.read` re-opens the file itself). `label` ("Sampler" or "OneShot") only changes the log text.
+**`sampleFileOk`** (line 928): the pre-flight check, shared by both voices. `SoundFile.openRead` reads only the header; `nil` means the file can't be opened. `duration = numFrames / sampleRate` is checked against the 600 s (10 minute) cap, and `sf.close` releases the handle (`Buffer.read` re-opens the file itself). `label` ("Sampler" or "OneShot") only changes the log text.
 
 ```supercollider
     readStereoBuffer { arg filePath;
@@ -1188,7 +1225,7 @@ Looping samplers and one-shots load audio the same way, through one set of helpe
     }
 ```
 
-**`readStereoBuffer`** (line 898): **every cached buffer is 2-channel.** Stereo files load with `Buffer.read`; mono files load with `Buffer.readChannel(channels: [0, 0])`, which reads the one channel into both; files with more than two channels keep their first two (`[0, 1]`). The reason is that `Sampler` reads with `BufRd.ar(2, ...)` and `OneShot` with `PlayBuf.ar(2, ...)`. A buffer UGen asked for more channels than the buffer has plays only the channels it finds, so a mono file used to come out of the **left speaker only**. Dual-mono buffers fix that without any special case in the voices (chapters 07 and 08).
+**`readStereoBuffer`** (line 946): **every cached buffer is 2-channel.** Stereo files load with `Buffer.read`; mono files load with `Buffer.readChannel(channels: [0, 0])`, which reads the one channel into both; files with more than two channels keep their first two (`[0, 1]`). The reason is that `Sampler` reads with `BufRd.ar(2, ...)` and `OneShot` with `PlayBuf.ar(2, ...)`. A buffer UGen asked for more channels than the buffer has plays only the channels it finds, so a mono file used to come out of the **left speaker only**. Dual-mono buffers fix that without any special case in the voices (chapters 07 and 08).
 
 ```supercollider
     acquireBuffer { arg filePath;
@@ -1217,7 +1254,7 @@ Looping samplers and one-shots load audio the same way, through one set of helpe
     }
 ```
 
-**`acquireBuffer` / `releaseBuffer`** (lines 912 and 932): the cache-hit / `\loading`-sentinel / refcount logic.
+**`acquireBuffer` / `releaseBuffer`** (lines 960 and 980): the cache-hit / `\loading`-sentinel / refcount logic.
 
 - **Polling wait**: if `bufferCache[filePath] == \loading`, another fork is reading this file right now. Wait 50 ms and check again, so two forks never read the same file twice and orphan a buffer.
 - **Cache hit**: increment the refcount and reuse the buffer.
@@ -1233,7 +1270,7 @@ Looping samplers and one-shots load audio the same way, through one set of helpe
     }
 ```
 
-**`carryVoiceParams`** (line 951): copy the outgoing instance's live params onto its replacement, so reloading a sample keeps the user's sound instead of resetting to SynthDef defaults. Voice 1 holds what `setParam('all', ...)` last wrote, and any `set_param` that arrived mid-load landed on the old instance, so it's included. Only the keys in `keys` are copied (the params Lua owns, not per-trigger values or bus routing).
+**`carryVoiceParams`** (line 999): copy the outgoing instance's live params onto its replacement, so reloading a sample keeps the user's sound instead of resetting to SynthDef defaults. Voice 1 holds what `setParam('all', ...)` last wrote, and any `set_param` that arrived mid-load landed on the old instance, so it's included. Only the keys in `keys` are copied (the params Lua owns, not per-trigger values or bus routing).
 
 ## Sampler lifecycle (async loads, generations, carry-over)
 
@@ -1259,7 +1296,7 @@ Looping samplers now load exactly like one-shots: asynchronously, cancellable, a
     }
 ```
 
-**`loadSampler`** (line 963): check the file with `sampleFileOk`, take a generation number from `bumpGen(samplerLoadGen, slot)`, fork, and `acquireBuffer`. If the generation moved on while the file was reading, the fork is **superseded**: it releases the reference it just took and installs nothing, so back-to-back loads (PSET recall, E3 stepping through files) can't overwrite each other's instances or leak refcounts. Otherwise it calls `installSampler`. Note that the old sampler is **no longer cleared first**; it keeps playing while the new file reads.
+**`loadSampler`** (line 1011): check the file with `sampleFileOk`, take a generation number from `bumpGen(samplerLoadGen, slot)`, fork, and `acquireBuffer`. If the generation moved on while the file was reading, the fork is **superseded**: it releases the reference it just took and installs nothing, so back-to-back loads (PSET recall, E3 stepping through files) can't overwrite each other's instances or leak refcounts. Otherwise it calls `installSampler`. Note that the old sampler is **no longer cleared first**; it keeps playing while the new file reads.
 
 ```supercollider
     installSampler { arg slot, buf, filePath;
@@ -1284,7 +1321,7 @@ Looping samplers now load exactly like one-shots: asynchronously, cancellable, a
     }
 ```
 
-**`installSampler`** (line 981) swaps the new instance in:
+**`installSampler`** (line 1030) swaps the new instance in:
 
 - The old instance's live Lua-owned params (amp, slews, cutoff, resonance, pan, rate, the four sends) are carried over with `carryVoiceParams`, then the old instance is freed.
 - Pending params are applied on top, then cleared.
@@ -1306,7 +1343,7 @@ Looping samplers now load exactly like one-shots: asynchronously, cancellable, a
     }
 ```
 
-**`clearSampler`** (line 1006): bump the generation first, so a load still in flight is cancelled (it releases its own buffer when it finishes), then free the instance and release the path's single reference.
+**`clearSampler`** (line 1055): bump the generation first, so a load still in flight is cancelled (it releases its own buffer when it finishes), then free the instance and release the path's single reference.
 
 ### `triggerSampler` and `setSamplerParam`
 
@@ -1331,7 +1368,7 @@ Looping samplers now load exactly like one-shots: asynchronously, cancellable, a
     }
 ```
 
-**Lines 1020-1036**: trigger and setParam, parallel to the TriSin patterns.
+**Lines 1069-1087**: trigger and setParam, parallel to the TriSin patterns.
 
 ## OneShot lifecycle (folders, generations, carry-over)
 
@@ -1358,7 +1395,7 @@ One-shots add one twist to the shared machinery: a slot can hold **several buffe
     }
 ```
 
-**`loadOneShotPaths`** (line 1052): take the generation number its caller just bumped, fork, and acquire a buffer for every path, **stopping as soon as the generation changes** so a cancelled folder load doesn't keep reading (and holding in RAM) the rest of its files. A **superseded** fork releases only the references it actually acquired and installs nothing; the newest request always wins.
+**`loadOneShotPaths`** (line 1099): take the generation number its caller just bumped, fork, and acquire a buffer for every path, **stopping as soon as the generation changes** so a cancelled folder load doesn't keep reading (and holding in RAM) the rest of its files. A **superseded** fork releases only the references it actually acquired and installs nothing; the newest request always wins.
 
 ```supercollider
     installOneShot { arg slot, buffers, filePaths;
@@ -1379,7 +1416,7 @@ One-shots add one twist to the shared machinery: a slot can hold **several buffe
     }
 ```
 
-**`installOneShot`** (line 1074) has the same shape as `installSampler`: carry the live params over (no `rate` keys; a one-shot's rate is per trigger), apply pending params, and release the old paths only after the new ones are held.
+**`installOneShot`** (line 1121) has the same shape as `installSampler`: carry the live params over (no `rate` keys; a one-shot's rate is per trigger), apply pending params, and release the old paths only after the new ones are held.
 
 ```supercollider
     loadOneShot { arg slot, filePath;
@@ -1421,7 +1458,7 @@ A single file is just a one-element path Array, so `oneShotPaths[slot]` is **alw
     }
 ```
 
-`clearOneShot` (line 1114) bumps the generation, so a load still in flight is cancelled, then frees the instance and releases one reference per path.
+`clearOneShot` (line 1166) bumps the generation, so a load still in flight is cancelled, then frees the instance and releases one reference per path.
 
 ```supercollider
     triggerOneShot { arg slot, voiceKey, rate = 1, bufIdx = 0, ampScale = 1.0;
@@ -1432,7 +1469,7 @@ A single file is just a one-element path Array, so `oneShotPaths[slot]` is **alw
     }
 ```
 
-**`triggerOneShot`** (line 1128): besides `rate`, a trigger carries `bufIdx` (which buffer of the folder to play) and `ampScale` (the accent multiplier). `setOneShotParam` still caches into `pendingOneShotParams` when there's no instance.
+**`triggerOneShot`** (line 1180): besides `rate`, a trigger carries `bufIdx` (which buffer of the folder to play) and `ampScale` (the accent multiplier). `setOneShotParam` still caches into `pendingOneShotParams` when there's no instance.
 
 ## Panic helpers
 
@@ -1450,7 +1487,7 @@ A single file is just a one-element path Array, so `oneShotPaths[slot]` is **alw
     }
 ```
 
-**Lines 1153-1163**: iterate over the instance dicts and call `resetVoices` on each. `resetVoices` (defined on the voice classes, chapters 07-08) frees all voice subgroups and recreates them empty — clearing any active notes without freeing the instance.
+**Lines 1205-1215**: iterate over the instance dicts and call `resetVoices` on each. `resetVoices` (defined on the voice classes, chapters 07-08) frees all voice subgroups and recreates them empty — clearing any active notes without freeing the instance. It also drops the `voiceSynths` handles, so a paused voice is not resumed through a stale reference (see Voice helpers above).
 
 These are called from the Lua panic handler (the K1 panic flow, or explicit param). The user can immediately silence all in-flight notes without re-loading any files or instances.
 
@@ -1468,7 +1505,7 @@ These are called from the Lua panic handler (the K1 panic flow, or explicit para
         if (granularAllocated) { this.freeGranularChain };
 ```
 
-**Lines 1165-1172**: first bump both load-generation dictionaries, so any sample load still reading from disk is cancelled and releases its buffer instead of installing onto freed buses. Then free every voice instance. `.do { |inst| inst.free }` iterates the dictionary's values and calls `.free` on each. If the granular chain is alive, tear it down too.
+**Lines 1218-1226**: first bump both load-generation dictionaries, so any sample load still reading from disk is cancelled and releases its buffer instead of installing onto freed buses. Then free every voice instance. `.do { |inst| inst.free }` iterates the dictionary's values and calls `.free` on each. If the granular chain is alive, tear it down too.
 
 ```supercollider
         bufferCache.do { |buf|
@@ -1476,7 +1513,7 @@ These are called from the Lua panic handler (the K1 panic flow, or explicit para
         };
 ```
 
-**Lines 1177-1180**: free every cached buffer. The guard against `\loading` prevents trying to free the sentinel (which would error — symbols don't have `.free`). The `buf.notNil` is belt-and-suspenders.
+**Lines 1227-1233**: free every cached buffer. The guard against `\loading` prevents trying to free the sentinel (which would error — symbols don't have `.free`). The `buf.notNil` is belt-and-suspenders.
 
 This was added during development. Without it, every script reload leaked the cached buffers on the SC server. Reloads would slowly exhaust server memory until SC restart.
 
@@ -1496,7 +1533,7 @@ This was added during development. Without it, every script reload leaked the ca
 }
 ```
 
-**Lines 1181-1196**: free the master FX synths, groups, and buses. The closing `}` ends the class.
+**Lines 1234-1245**: free the master FX synths, groups, and buses. The closing `}` ends the class.
 
 `★ Insight ─────────────────────────────────────`
 **Order of free matters when objects depend on each other.** Voice instances are freed first because they might be in the middle of triggering synths in the voice subgroups; freeing the subgroups out from under live synths could orphan node references. Master FX synths are freed before their group (otherwise the group.free would orphan them). Groups are freed before buses (the synths in the groups might write to the buses on a final block). Following this dependency-aware order prevents stray `Node X not found` errors.
@@ -1506,7 +1543,7 @@ This was added during development. Without it, every script reload leaked the ca
 
 ## Summary
 
-`Lied.sc` is about 1,180 lines of dense SC code, but the patterns it uses repeat throughout. Reading the file with the architectural context from earlier chapters in mind:
+`Lied.sc` is about 1,250 lines of dense SC code, but the patterns it uses repeat throughout. Reading the file with the architectural context from earlier chapters in mind:
 
 - **Bus + group architecture** sets up the audio routing fabric (sections 4, 7, 11).
 - **SynthDefs** (sections 5, 6) define the DSP graphs.

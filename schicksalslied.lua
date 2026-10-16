@@ -963,7 +963,11 @@ local function add_params()
         type = 'control',
         id = 'delay_decay',
         name = 'delay decay',
-        controlspec = controlspec.new(0.01, 10, 'lin', 0.01, 0.5, 's'),
+        -- CombL decay time: seconds for the echoes to fall 60 dB, so the
+        -- feedback per repeat is 0.001^(delay_time / decay). Up to 60 s so
+        -- long delay times can still ring on; exp so each detent is ~9%
+        -- at both ends of the range.
+        controlspec = controlspec.new(0.01, 60, 'exp', 0.01, 0.5, 's'),
         action = function(v) engine.set_delay_decay(v) end,
     }
     params:add{

@@ -1,6 +1,6 @@
 # Chapter 07 — `lib/Sampler.sc`
 
-The looping audio-file voice with A/B Phasor crossfade. **218 lines.** The most sophisticated voice class in the project.
+The looping audio-file voice with A/B Phasor crossfade. **232 lines.** The most sophisticated voice class in the project.
 
 ## What you'll learn
 
@@ -18,11 +18,11 @@ The key feature: **clickless retriggers between different start/end regions** vi
 ## Source sections
 
 1. Header + class declaration (lines 1-12)
-2. `*initClass` + `*addSynthDefs` (the SynthDef) (lines 13-110)
-3. `*new` + `init` (lines 112-152)
-4. `triggerVoice` (lines 154-170)
-5. `trigger`, `adjustVoice`, `setParam` (lines 172-198)
-6. `resetVoices` and `free` (lines 200-217)
+2. `*initClass` + `*addSynthDefs` (the SynthDef) (lines 14-113)
+3. `*new` + `init` (lines 115-156)
+4. `triggerVoice` (lines 159-183)
+5. `trigger`, `adjustVoice`, `setParam` (lines 185-211)
+6. `resetVoices` and `free` (lines 218-232)
 
 ## 1. Header and class declaration
 
@@ -37,10 +37,11 @@ Sampler {
     var <voiceParams;
     var <voiceGroup;
     var <singleVoices;
+    var voiceSynths;    // voiceKey -> Synth; it pauses itself when silent
     var <buffer;
 ```
 
-**Lines 1-12**: class declaration.
+**Lines 1-12**: class declaration. `voiceSynths` is a private `voiceKey -> Synth` dictionary: the voices pause themselves when silent, and `triggerVoice` needs the handle to resume them.
 
 The header notes the port: naherinlied's `\PlayBufPlayer` SynthDef became this class's main SynthDef. The voice-pool pattern (chapter 05) is applied to it — same `voiceKeys`/`globalParams`/`voiceParams`/`singleVoices` structure plus a `buffer` field holding the Buffer reference.
 
@@ -76,7 +77,7 @@ The header notes the port: naherinlied's `\PlayBufPlayer` SynthDef became this c
                 dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 ```
 
-**Lines 13-39**: `*initClass`, then `*addSynthDefs` and SynthDef args. As in TriSin (chapter 05), `*initClass` only sets `voiceKeys`; the SynthDef lives in `*addSynthDefs`, which `Lied.init` calls once Crone has booted the server (a `StartUp.add`/`waitForBoot` hook here could boot scsynth before Crone configured it).
+**Lines 14-40**: `*initClass`, then `*addSynthDefs` and SynthDef args. As in TriSin (chapter 05), `*initClass` only sets `voiceKeys`; the SynthDef lives in `*addSynthDefs`, which `Lied.init` calls once Crone has booted the server (a `StartUp.add`/`waitForBoot` hook here could boot scsynth before Crone configured it).
 
 24 args. Notable ones:
 
@@ -92,7 +93,7 @@ The header notes the port: naherinlied's `\PlayBufPlayer` SynthDef became this c
 
 ```supercollider
             var snd, snd2, pos, pos2, frames, duration, env, sig, ampSig,
-                startA, endA, startB, endB, crossfade, aOrB, filtered;
+                startA, endA, startB, endB, crossfade, aOrB, filtered, paused;
 
             aOrB = ToggleFF.kr(t_trig);
             startA = Latch.kr(start, aOrB);
@@ -102,7 +103,7 @@ The header notes the port: naherinlied's `\PlayBufPlayer` SynthDef became this c
             crossfade = Lag.ar(K2A.ar(aOrB), 0.1);
 ```
 
-**Lines 40-48**: the A/B crossfade machinery — the most novel construction in the file.
+**Lines 44-49**: the A/B crossfade machinery — the most novel construction in the file.
 
 - **`aOrB = ToggleFF.kr(t_trig)`** — a flip-flop. Every time `t_trig` fires (transitions 0→1), `aOrB` toggles between 0 and 1.
 
@@ -137,7 +138,7 @@ The effect: when you trigger the synth twice, the first trigger captures one set
             );
 ```
 
-**Lines 50-64**: rate calculation + duration + envelope.
+**Lines 51-65**: rate calculation + duration + envelope.
 
 - **`rate = Lag.kr(rate, rateSlew) * BufRateScale.kr(bufnum)`** — slew the user's rate AND scale by the buffer's native rate.
 - **`frames = BufFrames.kr(bufnum)`** — total frame count of the buffer.
@@ -187,7 +188,7 @@ The envelope deliberately does NOT carry `amp`. `EnvGen` reads each segment's ta
             );
 ```
 
-**Lines 66-94**: the dual Phasors + dual BufRds.
+**Lines 67-95**: the dual Phasors + dual BufRds.
 
 The cleverness is in the start/end computation:
 
@@ -219,7 +220,9 @@ The B Phasor + BufRd is identical, but triggered by `(1 - aOrB)` and using `star
                 freq: cutoff.lag3(cutoff_slew),
                 gain: resonance);
 
-            sig = Balance2.ar(filtered[0], filtered[1], pan.lag3(pan_slew));
+            paused = Lied.pauseWhenSilent(t_trig, duration, filtered);
+
+            sig = Balance2.ar(filtered[0], filtered[1], Lied.notePan(pan, pan_slew, t_trig, paused));
 
             ampSig = amp.lag3(amp_slew);
             Out.ar(dry_bus,    LeakDC.ar(sig) * ampSig * dry_send.lag3(0.05));
@@ -230,12 +233,13 @@ The B Phasor + BufRd is identical, but triggered by `(1 - aOrB)` and using `star
     }
 ```
 
-**Lines 96-109**: crossfade + filter + balance + sends.
+**Lines 97-112**: crossfade + filter + self-pause + balance + sends.
 
 The crossfade: `(crossfade * snd) + ((1 - crossfade) * snd2)`. When crossfade slews from 0 to 1, the output transitions from snd2-only to snd-only over 100 ms.
 
 `MoogFF.ar` filters the crossfaded output; `Balance2.ar(L, R, pan)` is a stereo balance (pan position from -1 to 1 controls L/R levels).
 
+`Lied.pauseWhenSilent(t_trig, duration, filtered)` pauses the synth once `duration` seconds (the region length x loops / rate, computed above) have passed since the last trigger **and** `filtered` (pre-amp, already enveloped) is below -80 dB. Both conditions are needed: a sample region can contain quiet passages well before its end, so silence alone would pause it mid-playback, and the `MoogFF` tail means time alone is not enough either. The pause is what makes an idle sampler slot free; the next `triggerVoice` resumes it (section 4). `paused = Lied.pauseWhenSilent(...)` returns its pause condition, and `Lied.notePan(pan, pan_slew, t_trig, paused)` replaces `pan.lag3(pan_slew)`: the note that resumes a paused voice snaps to the current pan (a paused synth's lag is frozen at a stale value), while a note that retriggers a still-sounding voice keeps slewing, since snapping there jumped the ringing tail across the stereo field within one block and clicked. The pan then slews normally while the region plays, so a note can start left and swing right. Both helpers are explained in chapter 03.
 `LeakDC.ar(sig)` is a DC-blocking high-pass filter. Inserted before each send because BufRd output can have DC offset (especially after rate changes, MoogFF behavior, etc.), and accumulating DC offset on the buses can affect dynamics.
 
 ## 3. `*new` + `init`
@@ -275,6 +279,7 @@ The crossfade: `(crossfade * snd) + ((1 - crossfade) * snd2)`. When crossfade sl
             \granular_send, 0,
         ]);
         singleVoices = Dictionary.new;
+        voiceSynths = Dictionary.new;
         voiceParams = Dictionary.new;
         voiceKeys.do({
             arg voiceKey;
@@ -284,7 +289,7 @@ The crossfade: `(crossfade * snd) + ((1 - crossfade) * snd2)`. When crossfade sl
     }
 ```
 
-**Lines 112-152**: constructor + init.
+**Lines 115-156**: constructor + init.
 
 `*new` takes a `buf` arg (the audio buffer) plus the four bus indices. The constructor stores `buffer = buf` and passes `buf.bufnum` (the integer bufnum) into the globalParams dict.
 
@@ -304,26 +309,35 @@ The 8-subgroup pattern is identical to other voice classes.
             voiceParams[voiceKey][\start] = startPos;
             voiceParams[voiceKey][\end]   = endPos;
             voiceParams[voiceKey][\rate]  = rate;
-            singleVoices[voiceKey].set(\start, startPos, \end, endPos, \rate, rate, \t_trig, 1);
+            // The voice pauses itself once silent (Lied.pauseWhenSilent);
+            // resume it in the same bundle as the retrigger.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey].run(true);
+                singleVoices[voiceKey].set(\start, startPos, \end, endPos, \rate, rate, \t_trig, 1);
+            });
         }, {
             voiceParams[voiceKey][\start] = startPos;
             voiceParams[voiceKey][\end]   = endPos;
             voiceParams[voiceKey][\rate]  = rate;
-            Synth.new(\Sampler, voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
-            singleVoices[voiceKey].set(\t_trig, 1);
+            // One bundle, so the first trigger lands in the synth's first
+            // block: a separate later message could find it paused.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey] = Synth.new(\Sampler, voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
+                singleVoices[voiceKey].set(\t_trig, 1);
+            });
             NodeWatcher.register(singleVoices[voiceKey], true);
         });
     }
 ```
 
-**Lines 154-170**: trigger with start, end, rate.
+**Lines 159-183**: trigger with start, end, rate.
 
 Same `isPlaying` branch pattern as TriSin:
 
-- **If alive**: update cached values, then one combined `set(\start, \end, \rate, \t_trig=1)`. The combined set is critical — by setting all four args in one OSC message, the A/B crossfade machinery (which depends on `start, end` being captured when `aOrB` toggles) sees the NEW values at the moment of the toggle.
-- **If not alive**: cache + allocate fresh + set t_trig + NodeWatcher.
+- **If alive**: update cached values, then, inside one `makeBundle`, `voiceSynths[voiceKey].run(true)` (wake the synth if it paused itself; harmless otherwise) and one combined `set(\start, \end, \rate, \t_trig=1)`. The combined set is critical — by setting all four args in one OSC message, the A/B crossfade machinery (which depends on `start, end` being captured when `aOrB` toggles) sees the NEW values at the moment of the toggle.
+- **If not alive**: cache, then in one `makeBundle` allocate fresh (keeping the handle in `voiceSynths`) and set t_trig, so the first trigger lands in the synth's first block; then NodeWatcher.
 
-If you're tracking why combined sets matter for the A/B crossfade: the SynthDef's `Latch.kr(start, aOrB)` captures the value of `start` at the moment of the trigger. By setting `\start` and `\t_trig` in the same OSC message, we ensure the latch captures the new value, not the old one.
+If you're tracking why combined sets matter for the A/B crossfade: the SynthDef's `Latch.kr(start, aOrB)` captures the value of `start` at the moment of the trigger. By setting `\start` and `\t_trig` in the same OSC message, we ensure the latch captures the new value, not the old one. The `run(true)` shares the bundle (same time stamp), so a resumed synth sees start and trigger together on its first block.
 
 ## 5. `trigger`, `adjustVoice`, `setParam`
 
@@ -357,7 +371,7 @@ If you're tracking why combined sets matter for the A/B crossfade: the SynthDef'
     }
 ```
 
-**Lines 172-198**: standard cross-voice control methods. Identical structure to TriSin's analogous methods (chapter 05). The only difference: `trigger` takes start/end/rate args.
+**Lines 185-211**: standard cross-voice control methods. Identical structure to TriSin's analogous methods (chapter 05). The only difference: `trigger` takes start/end/rate args.
 
 ## 6. `resetVoices` and `free`
 
@@ -366,8 +380,9 @@ If you're tracking why combined sets matter for the A/B crossfade: the SynthDef'
         var s = Server.default;
         voiceKeys.do({ arg voiceKey;
             if (singleVoices[voiceKey].notNil) {
-                singleVoices[voiceKey].free;
+                singleVoices[voiceKey].free;   // frees its Synth too
             };
+            voiceSynths.removeAt(voiceKey);
             singleVoices[voiceKey] = Group.new(voiceGroup);
         });
     }
@@ -378,9 +393,9 @@ If you're tracking why combined sets matter for the A/B crossfade: the SynthDef'
 }
 ```
 
-**Lines 200-217**: panic recovery + cleanup.
+**Lines 218-232**: panic recovery + cleanup.
 
-`resetVoices`: for each voice key, free the existing subgroup (and any synth inside) and create a fresh empty subgroup. Used by `Lied.silenceAllSamplers` for K1 panic recovery — destroys + recreates the subgroups, keeping the instance alive.
+`resetVoices`: for each voice key, free the existing subgroup (and any synth inside) and create a fresh empty subgroup, and drop the `voiceSynths` handle (so a paused voice is never resumed through a stale reference). Used by `Lied.silenceAllSamplers` for K1 panic recovery — destroys + recreates the subgroups, keeping the instance alive.
 
 After this, every voice key has an empty subgroup. The next trigger on any voice key will take the "allocate fresh" branch in `triggerVoice` because `isPlaying` returns false on the fresh empty group.
 
@@ -406,14 +421,15 @@ You should hear clickless segment changes, with an audible 100 ms crossfade betw
 
 ## Summary
 
-`Sampler.sc` is 218 lines. The patterns to internalize:
+`Sampler.sc` is 232 lines. The patterns to internalize:
 
 - **A/B Phasor + Latch + Lag crossfade**: smooth retriggers between different start/end regions.
 - **Signed rate via "boolean as signal"**: `(rate > 0) * start + (rate < 0) * end` selects forward or reverse direction.
 - **Duration-aware envelope**: envelope's hold time computed from buffer region length / rate, ensuring graceful fade-out at region end.
 - **Combined `set(start, end, rate, t_trig=1)`**: atomic update + trigger in one OSC message, critical for A/B latch correctness.
 - **`LeakDC.ar` before sends**: prevents DC offset accumulation on FX buses.
-- **`resetVoices` for panic recovery**: destroy + recreate subgroups, keeping the instance alive.
+- **Self-pausing persistent voices**: `Lied.pauseWhenSilent` pauses a voice after its region has played out and gone silent; `triggerVoice` resumes it with `run(true)` in the same bundle as the trigger.
+- **`resetVoices` for panic recovery**: destroy + recreate subgroups (and drop the `voiceSynths` handles), keeping the instance alive.
 
 ## What's next
 

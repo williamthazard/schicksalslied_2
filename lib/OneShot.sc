@@ -11,6 +11,7 @@ OneShot {
     var <voiceParams;
     var <voiceGroup;
     var <singleVoices;
+    var voiceSynths;    // voiceKey -> Synth; it pauses itself when silent
     var <buffers;
 
     *initClass {
@@ -36,14 +37,26 @@ OneShot {
                 dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
                 dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 
-            var sig, filter, signal, ampSig;
+            var sig, filter, signal, ampSig, len, paused;
             // Buffers are always 2-channel (Lied reads mono files into
             // both channels). Balance2 on a dual-mono pair gives the
             // same levels Pan2 gave the mono signal at every pan
             // position; stereo files keep their image.
-            sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf) * rate, t_gate);
+            // Reversed hits (rate < 0) start from the file's last frame;
+            // from frame 0 they would have nothing to play.
+            // PlayBuf holds the file's last sample once it reaches the end,
+            // so fade each hit to 0 over its last 5 ms (its second half, if
+            // shorter): a file that doesn't end at zero would otherwise leave
+            // DC on the output and never pause. Audio rate, so every hit starts
+            // at full level. max() and clip() keep the gain finite at rate 0
+            // and for an empty buffer (BufDur 0).
+            len = BufDur.kr(buf) / rate.abs.max(1e-9);
+            sig = PlayBuf.ar(2, buf, BufRateScale.kr(buf) * rate, t_gate,
+                    (rate < 0) * (BufFrames.kr(buf) - 1))
+                * ((len - Sweep.ar(t_gate)) / (len * 0.5).clip(1e-6, 0.005)).clip(0, 1);
             filter = MoogFF.ar(sig, cutoff.lag3(cutoff_slew), resonance);
-            signal = Balance2.ar(filter[0], filter[1], pan.lag3(pan_slew));
+            paused = Lied.pauseWhenSilent(t_gate, len, filter);
+            signal = Balance2.ar(filter[0], filter[1], Lied.notePan(pan, pan_slew, t_gate, paused));
 
             // Post-fader: amp scales all 4 sends. No doneAction:2 — synth is persistent.
             ampSig = amp.lag3(amp_slew) * amp_scale;
@@ -85,6 +98,7 @@ OneShot {
             \granular_send, 0,
         ]);
         singleVoices = Dictionary.new;
+        voiceSynths = Dictionary.new;
         voiceParams = Dictionary.new;
         voiceKeys.do({
             arg voiceKey;
@@ -96,10 +110,19 @@ OneShot {
     playVoice {
         arg voiceKey;
         if (singleVoices[voiceKey].isPlaying, {
-            singleVoices[voiceKey].set(\t_gate, 1);
+            // The voice pauses itself once silent (Lied.pauseWhenSilent);
+            // resume it in the same bundle as the retrigger.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey].run(true);
+                singleVoices[voiceKey].set(\t_gate, 1);
+            });
         }, {
-            Synth.new("OneShot", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
-            singleVoices[voiceKey].set(\t_gate, 1);
+            // One bundle, so the first trigger lands in the synth's first
+            // block: a separate later message could find it paused.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey] = Synth.new("OneShot", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
+                singleVoices[voiceKey].set(\t_gate, 1);
+            });
             NodeWatcher.register(singleVoices[voiceKey], true);
         });
     }
@@ -114,10 +137,19 @@ OneShot {
         voiceParams[voiceKey][\buf] = targetBuf.bufnum;
         voiceParams[voiceKey][\amp_scale] = ampScale;
         if (singleVoices[voiceKey].isPlaying, {
-            singleVoices[voiceKey].set(\rate, rate, \buf, targetBuf.bufnum, \amp_scale, ampScale, \t_gate, 1);
+            // The voice pauses itself once silent (Lied.pauseWhenSilent);
+            // resume it in the same bundle as the retrigger.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey].run(true);
+                singleVoices[voiceKey].set(\rate, rate, \buf, targetBuf.bufnum, \amp_scale, ampScale, \t_gate, 1);
+            });
         }, {
-            Synth.new("OneShot", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
-            singleVoices[voiceKey].set(\t_gate, 1);
+            // One bundle, so the first trigger lands in the synth's first
+            // block: a separate later message could find it paused.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey] = Synth.new("OneShot", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
+                singleVoices[voiceKey].set(\t_gate, 1);
+            });
             NodeWatcher.register(singleVoices[voiceKey], true);
         });
     }
@@ -163,8 +195,9 @@ OneShot {
         var s = Server.default;
         voiceKeys.do({ arg voiceKey;
             if (singleVoices[voiceKey].notNil) {
-                singleVoices[voiceKey].free;
+                singleVoices[voiceKey].free;   // frees its Synth too
             };
+            voiceSynths.removeAt(voiceKey);
             singleVoices[voiceKey] = Group.new(voiceGroup);
         });
     }

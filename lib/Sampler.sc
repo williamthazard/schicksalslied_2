@@ -8,6 +8,7 @@ Sampler {
     var <voiceParams;
     var <voiceGroup;
     var <singleVoices;
+    var voiceSynths;    // voiceKey -> Synth; it pauses itself when silent
     var <buffer;
 
     *initClass {
@@ -38,7 +39,7 @@ Sampler {
                 dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
                 dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
             var snd, snd2, pos, pos2, frames, duration, env, sig, ampSig,
-                startA, endA, startB, endB, crossfade, aOrB, filtered;
+                startA, endA, startB, endB, crossfade, aOrB, filtered, paused;
 
             aOrB = ToggleFF.kr(t_trig);
             startA = Latch.kr(start, aOrB);
@@ -98,7 +99,9 @@ Sampler {
                 freq: cutoff.lag3(cutoff_slew),
                 gain: resonance);
 
-            sig = Balance2.ar(filtered[0], filtered[1], pan.lag3(pan_slew));
+            paused = Lied.pauseWhenSilent(t_trig, duration, filtered);
+
+            sig = Balance2.ar(filtered[0], filtered[1], Lied.notePan(pan, pan_slew, t_trig, paused));
 
             // Post-fader: amp scales all 4 sends
             ampSig = amp.lag3(amp_slew);
@@ -143,6 +146,7 @@ Sampler {
             \granular_send, 0,
         ]);
         singleVoices = Dictionary.new;
+        voiceSynths = Dictionary.new;
         voiceParams = Dictionary.new;
         voiceKeys.do({
             arg voiceKey;
@@ -158,13 +162,22 @@ Sampler {
             voiceParams[voiceKey][\start] = startPos;
             voiceParams[voiceKey][\end]   = endPos;
             voiceParams[voiceKey][\rate]  = rate;
-            singleVoices[voiceKey].set(\start, startPos, \end, endPos, \rate, rate, \t_trig, 1);
+            // The voice pauses itself once silent (Lied.pauseWhenSilent);
+            // resume it in the same bundle as the retrigger.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey].run(true);
+                singleVoices[voiceKey].set(\start, startPos, \end, endPos, \rate, rate, \t_trig, 1);
+            });
         }, {
             voiceParams[voiceKey][\start] = startPos;
             voiceParams[voiceKey][\end]   = endPos;
             voiceParams[voiceKey][\rate]  = rate;
-            Synth.new(\Sampler, voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
-            singleVoices[voiceKey].set(\t_trig, 1);
+            // One bundle, so the first trigger lands in the synth's first
+            // block: a separate later message could find it paused.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey] = Synth.new(\Sampler, voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
+                singleVoices[voiceKey].set(\t_trig, 1);
+            });
             NodeWatcher.register(singleVoices[voiceKey], true);
         });
     }
@@ -206,8 +219,9 @@ Sampler {
         var s = Server.default;
         voiceKeys.do({ arg voiceKey;
             if (singleVoices[voiceKey].notNil) {
-                singleVoices[voiceKey].free;
+                singleVoices[voiceKey].free;   // frees its Synth too
             };
+            voiceSynths.removeAt(voiceKey);
             singleVoices[voiceKey] = Group.new(voiceGroup);
         });
     }

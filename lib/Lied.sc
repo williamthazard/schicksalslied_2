@@ -196,25 +196,31 @@ Lied {
             var ptr, ptrRand, totalDelay, maxGrainDur;
             env = EnvGen.kr(Env.asr(atk, 1, rel), gate, doneAction: 2);
             grainTrigger = CoinGate.ar(sync.clip(0, 1), Impulse.ar(dens)) + CoinGate.ar(1 - sync.clip(0, 1), Dust.ar(dens));
-            durCtrl = baseDur * LFNoise1.ar(100).exprange(1 / durRand, durRand);
-            rateCtrl = rate.lag3(0.5) * LFNoise1.ar(100).exprange(1 / rateRand, rateRand);
+            // Control rate is plenty: GrainBuf only reads dur/rate/pos when a
+            // grain starts (these were audio rate; ~1/3 of the grain cost).
+            durCtrl = baseDur * LFNoise1.kr(100).exprange(1 / durRand, durRand);
+            rateCtrl = rate.lag3(0.5) * LFNoise1.kr(100).exprange(1 / rateRand, rateRand);
             panCtrl = pan + LFNoise1.kr(100).bipolar(panRand);
-            ptrRand = LFNoise1.ar(100).bipolar(ptrRandSamples);
+            ptrRand = LFNoise1.kr(100).bipolar(ptrRandSamples);
             totalDelay = max(ptrSampleDelay - ptrRand, minPtrDelay);
             ptr = In.ar(ptrBus, 1);
             ptr = ptr - totalDelay;
             ptr = ptr / BufFrames.kr(buf);
             maxGrainDur = (totalDelay / rateCtrl.abs) / SampleRate.ir;
             durCtrl = min(durCtrl, maxGrainDur);
+            // Mono grains, filtered once, then panned: half the MoogFF cost of
+            // filtering a stereo pair (MoogFF is about half the grain cost).
+            // The pan LFO now moves the whole grain stream smoothly instead
+            // of placing each grain where the LFO was when it started.
             sig = GrainBuf.ar(
-                2,
+                1,
                 grainTrigger,
                 durCtrl,
                 buf,
                 rateCtrl,
                 ptr,
                 4,
-                panCtrl,
+                0,
                 grainEnv
             );
             sig = MoogFF.ar(
@@ -222,7 +228,7 @@ Lied {
                 freq: min(cutoff, cutoffMax).clip(50, 18000),
                 gain: resonance.clip(0, 4)
             );
-            Out.ar(out, sig);
+            Out.ar(out, Pan2.ar(sig, panCtrl));
         }).add;
 
         // Voice → granular bus → micBus send. Sums stereo voice signal to
@@ -859,6 +865,39 @@ Lied {
             };
             pendingSineParams[cellId][paramKey] = paramValue;
         };
+    }
+
+    // -----------------------------------------------------------------
+    // Voice SynthDef helpers (used by the voice classes' *addSynthDefs)
+    // -----------------------------------------------------------------
+
+    // Voices are persistent synths (retriggered, never freed). This pauses
+    // the enclosing synth once a note has had time to finish (time since the
+    // last trigger > length) AND its pre-amp signal is below -80 dB, so idle
+    // voices cost no DSP; the voice classes resume it (n_run) in the same
+    // bundle as the next trigger. Time alone isn't enough (filters ring, and
+    // a self-oscillating MoogFF never goes quiet, so it never pauses), nor
+    // is silence alone (a sample can have quiet gaps). PauseSelf pauses in
+    // the same control block the condition turns true, and re-arms when the
+    // resuming trigger resets Sweep. (An envelope doneAction fires a block
+    // later, which swallowed a trigger landing in that block.) Returns the
+    // pause condition, for notePan.
+    *pauseWhenSilent { arg trig, length, sig;
+        var paused = (Sweep.kr(trig) > length) * (Amplitude.kr(sig).asArray.sum < 1e-4);
+        PauseSelf.kr(paused);
+        ^paused
+    }
+
+    // Pan for a retriggered voice. A paused voice's pan lag stops tracking,
+    // so a note that resumes one snaps to the current pan (zero lag time
+    // for one control block) instead of gliding over from where the last
+    // note left it. A note that retriggers a voice still sounding keeps
+    // slewing: snapping there would jump the ringing tail across the
+    // stereo field within one block, which clicks. `paused` is what
+    // pauseWhenSilent returned; Delay1 reads it from the last block the
+    // synth ran, so it is 1 only on the block that resumes a paused voice.
+    *notePan { arg pan, slew, trig, paused;
+        ^pan.lag3(slew * (1 - (Trig1.kr(trig, ControlDur.ir) * Delay1.kr(paused))));
     }
 
     // -----------------------------------------------------------------

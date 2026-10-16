@@ -1,6 +1,6 @@
 # Chapter 05 — `lib/TriSin.sc`
 
-The FM-synthesis voice class. **198 lines.** TriSin is the most parameter-rich voice in the project — FM index envelope, MoogFF filter with optional envelope tracking, slewed pitch, plus the standard send routing.
+The FM-synthesis voice class. **211 lines.** TriSin is the most parameter-rich voice in the project — FM index envelope, MoogFF filter with optional envelope tracking, slewed pitch, plus the standard send routing.
 
 ## What you'll learn
 
@@ -108,11 +108,11 @@ So the chain of events is: class compiles → `*initClass` sets `voiceKeys` → 
 ## Source sections (TriSin.sc specifically)
 
 1. Class declaration + ivars (lines 1-9)
-2. `*initClass` + `*addSynthDefs` (lines 10-92)
-3. `*new` + `init` (lines 94-142)
-4. `playVoice` and `trigger` (lines 144-166)
-5. `adjustVoice` and `setParam` (lines 168-189)
-6. `freeAllNotes` and `free` (lines 191-197)
+2. `*initClass` + `*addSynthDefs` (lines 11-95)
+3. `*new` + `init` (lines 97-146)
+4. `playVoice` and `trigger` (lines 150-179)
+5. `adjustVoice` and `setParam` (lines 182-202)
+6. `freeAllNotes` and `free` (lines 204-211)
 
 ## 1. Class declaration and ivars
 
@@ -125,9 +125,10 @@ TriSin {
     var <voiceParams;
     var <voiceGroup;
     var <singleVoices;
+    var voiceSynths;    // voiceKey -> Synth; it pauses itself when silent
 ```
 
-**Lines 1-9**: class declaration + 5 instance variables matching the voice-pool pattern's template above.
+**Lines 1-9**: class declaration + 5 instance variables matching the voice-pool pattern's template above. `voiceSynths` is private (no `<`): it maps each voice key to its `Synth`, so the voice can be resumed after it has paused itself (see section 4).
 
 ## 2. `*initClass` + `*addSynthDefs` (the SynthDef)
 
@@ -168,7 +169,7 @@ TriSin {
                 dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 ```
 
-**Lines 10-43**: `*initClass` (just `voiceKeys`), then `*addSynthDefs` and the start of the SynthDef. The TriSin SynthDef has **34 args** — by far the largest in the project.
+**Lines 11-44**: `*initClass` (just `voiceKeys`), then `*addSynthDefs` and the start of the SynthDef. The TriSin SynthDef has **34 args** — by far the largest in the project.
 
 The args, grouped:
 
@@ -198,7 +199,7 @@ The args, grouped:
 `─────────────────────────────────────────────────`
 
 ```supercollider
-            var car, mod, envelope, iEnv, filter, signal, ampSig;
+            var car, mod, envelope, iEnv, filter, signal, ampSig, paused;
             var slewed_freq = max(0.1, freq + hz_offset).lag3(freq_slew);
 
             envelope = EnvGen.kr(
@@ -225,7 +226,7 @@ The args, grouped:
             iEnv = index.lag3(0.05) * (1 + ((iScale.lag3(0.05) - 1) * iEnv));
 ```
 
-**Lines 45-69**: variable declarations, freq offset + slewing, and two envelopes. `max(0.1, freq + hz_offset)` adds the Hz offset to the base frequency (clamped so it can never reach 0 or go negative) before `.lag3(freq_slew)` smooths pitch changes.
+**Lines 46-70**: variable declarations, freq offset + slewing, and two envelopes. `max(0.1, freq + hz_offset)` adds the Hz offset to the base frequency (clamped so it can never reach 0 or go negative) before `.lag3(freq_slew)` smooths pitch changes.
 
 `Env([0, 1, 0], times: [attack, release], curve: [cAtk, cRel])`:
 - Three breakpoints: 0 → 1 → 0.
@@ -234,7 +235,7 @@ The args, grouped:
 
 This is an **AR (attack-release) envelope**, gated by `t_gate`. Setting `t_gate = 1` retriggers from the start.
 
-**NO `doneAction: 2`** — important. The synth STAYS ALIVE after the envelope completes. The user can re-trigger the same Synth indefinitely. This is the **persistent voice** model.
+**NO `doneAction: 2`** — important. The synth STAYS ALIVE after the envelope completes. The user can re-trigger the same Synth indefinitely. This is the **persistent voice** model. (Once a note is over and silent the synth *pauses itself*, so staying alive costs nothing; see `Lied.pauseWhenSilent` below and in chapter 03.)
 
 `iEnv` (FM index envelope) goes index → index*iScale → index. This sweeps the FM intensity during the note: low → high → low. If iScale = 5, the index temporarily hits 5x its base value mid-note. Sweeping the FM index produces the characteristic "evolving timbre" that gives TriSin its name.
 
@@ -245,7 +246,7 @@ The EnvGen itself only produces the unity shape 0 → 1 → 0; `index` and `iSca
             car = LFTri.ar(slewed_freq * cRatio + mod) * envelope;
 ```
 
-**Lines 71-72**: the FM construction.
+**Lines 72-73**: the FM construction.
 
 - **`mod`**: sine oscillator at frequency `freq × mRatio`. The `mul` (output gain) is `slewed_freq * mRatio * iEnv` — which is the FM modulation depth, scaling with the FM frequency AND the envelope. This is the classic FM-index-relative-to-frequency formula.
 - **`car`**: triangle oscillator at `freq × cRatio`, with `mod` added to its phase argument. Adding to the phase of an LFTri is how SC implements frequency modulation: the modulator's value perturbs the carrier's instantaneous phase. Then multiply by the volume envelope.
@@ -265,13 +266,15 @@ The `LFTri` carrier (triangle, not sine) is what gives TriSin its name: TRIangle
                 gain: resonance
             );
 
+            paused = Lied.pauseWhenSilent(t_gate, attack + release, filter);
+
             signal = Pan2.ar(
                 filter,
-                pan.lag3(pan_slew)
+                Lied.notePan(pan, pan_slew, t_gate, paused)
             );
 ```
 
-**Lines 74-83**: filter and pan.
+**Lines 75-86**: filter, self-pause and pan.
 
 `MoogFF.ar(in, freq, gain)` is a Moog ladder filter UGen with `freq` cutoff and `gain` resonance.
 
@@ -280,6 +283,10 @@ The `LFTri` carrier (triangle, not sine) is what gives TriSin its name: TRIangle
 - Otherwise, use `cutoff` directly. Static filter.
 
 This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter opens at the attack and closes at the release.
+
+`paused = Lied.pauseWhenSilent(t_gate, attack + release, filter)` is what makes a persistent voice cheap. Persistent means the synth never frees, but it would otherwise keep computing the FM graph (and writing zeros to four buses) between notes. This helper pauses the synth once `attack + release` seconds have passed since the last `t_gate` **and** the post-filter signal is below -80 dB. The signal check matters here: `MoogFF` can ring on after the envelope ends, and at high `resonance` it self-oscillates, in which case the voice correctly never pauses. The next trigger resumes it (section 4). The helper returns its pause condition, which goes to `notePan` below. Full explanation, and why it uses `PauseSelf` rather than `DetectSilence` or an envelope `doneAction`, in chapter 03.
+
+`Lied.notePan(pan, pan_slew, t_gate, paused)` replaces the old `pan.lag3(pan_slew)`. A paused synth's pan lag is frozen at a stale value, so the note that **resumes** a paused voice snaps to the current pan (it does not start from where the last note left it). A note that retriggers a voice that is still sounding keeps slewing: snapping there would jump the ringing tail across the stereo field within one block, which clicked. After that, the pan slews with `pan_slew` for as long as the note sounds, so a pan change during a note still glides. Details in chapter 03.
 
 ```supercollider
             ampSig = amp.lag3(amp_slew);
@@ -291,9 +298,9 @@ This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter
     }
 ```
 
-**Lines 85-91**: post-fader amp and the four Y-shaped sends. Each `Out.ar` writes `signal × amp × send_level` to its FX bus.
+**Lines 89-94**: post-fader amp and the four Y-shaped sends. Each `Out.ar` writes `signal × amp × send_level` to its FX bus.
 
-`.add` at the end registers the SynthDef. The closing `}` of `*addSynthDefs` follows it directly (line 92); there is no `StartUp`/`waitForBoot` wrapper to unwind.
+`.add` at the end registers the SynthDef. The closing `}` of `*addSynthDefs` follows it directly (line 95); there is no `StartUp`/`waitForBoot` wrapper to unwind.
 
 ## 3. `*new` + `init`
 
@@ -340,6 +347,7 @@ This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter
             \granular_send, 0,
         ]);
         singleVoices = Dictionary.new;
+        voiceSynths = Dictionary.new;
         voiceParams = Dictionary.new;
         voiceKeys.do({
             arg voiceKey;
@@ -349,7 +357,7 @@ This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter
     }
 ```
 
-**Lines 94-142**: constructor + initializer. `*new` is standard SC delegation to `init`.
+**Lines 97-146**: constructor + initializer. `*new` is standard SC delegation to `init`.
 
 `init`:
 - **`voiceGroup = Group.new(s)`** — outer group on the server.
@@ -374,11 +382,20 @@ Defaults worth noting:
         arg voiceKey, freq;
         if (singleVoices[voiceKey].isPlaying, {
             voiceParams[voiceKey][\freq] = freq;
-            singleVoices[voiceKey].set(\freq, freq, \t_gate, 1);
+            // The voice pauses itself once silent (Lied.pauseWhenSilent);
+            // resume it in the same bundle as the retrigger.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey].run(true);
+                singleVoices[voiceKey].set(\freq, freq, \t_gate, 1);
+            });
         }, {
             voiceParams[voiceKey][\freq] = freq;
-            Synth.new("TriSin", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
-            singleVoices[voiceKey].set(\t_gate, 1);
+            // One bundle, so the first trigger lands in the synth's first
+            // block: a separate later message could find it paused.
+            Server.default.makeBundle(nil, {
+                voiceSynths[voiceKey] = Synth.new("TriSin", voiceParams[voiceKey].getPairs, singleVoices[voiceKey]);
+                singleVoices[voiceKey].set(\t_gate, 1);
+            });
             NodeWatcher.register(singleVoices[voiceKey], true);
         });
     }
@@ -393,14 +410,14 @@ Defaults worth noting:
     }
 ```
 
-**Lines 144-166**: trigger machinery.
+**Lines 150-179**: trigger machinery.
 
 `playVoice(voiceKey, freq)`: the **persistent voice retrigger pattern**.
 
-- **If alive** (`singleVoices[voiceKey].isPlaying` returns true): retrigger the existing synth. Set the new freq AND `\t_gate, 1`. The `t_gate` re-fires the envelope from the start. The synth stays alive across triggers.
-- **If not alive**: allocate fresh. `Synth.new("TriSin", voiceParams[voiceKey].getPairs, singleVoices[voiceKey])` — splice all cached params via getPairs. Then set `t_gate` to fire the first envelope. Finally `NodeWatcher.register(...)` so `isPlaying` will accurately track future state changes.
+- **If alive** (`singleVoices[voiceKey].isPlaying` returns true): retrigger the existing synth. Inside one `Server.default.makeBundle(nil, {...})` it sends `voiceSynths[voiceKey].run(true)` (resume the synth if it had paused itself; harmless if it is running) and sets the new freq AND `\t_gate, 1`. Both messages carry the same time stamp, so the synth wakes and sees the trigger on its first block. The `t_gate` re-fires the envelope from the start. The synth stays alive across triggers.
+- **If not alive**: allocate fresh. `voiceSynths[voiceKey] = Synth.new("TriSin", voiceParams[voiceKey].getPairs, singleVoices[voiceKey])` — splice all cached params via getPairs, and keep the handle for later resumes. `Synth.new` and `set(\t_gate, 1)` go in one `makeBundle`, so the first trigger lands in the synth's first block (a separate later message could find the synth already paused when the note is very short). Finally `NodeWatcher.register(...)` so `isPlaying` will accurately track future state changes.
 
-As long as the synth exists, retriggering is just two `set` calls. Only the first call per voice key (or after an explicit free) allocates a new Synth.
+As long as the synth exists, retriggering is one resume plus one `set`, bundled. Only the first call per voice key (or after an explicit free) allocates a new Synth.
 
 `★ Insight ─────────────────────────────────────`
 **`isPlaying` is a NodeWatcher-maintained flag**. SC sets it to true on construction; without NodeWatcher, it stays true forever (even after the synth is freed by some other path). With `NodeWatcher.register(node, true)`, SC monitors the node and updates `isPlaying` based on real server `/n_end` events. The `true` arg means "track free events" — set `isPlaying` to false when the node frees.
@@ -433,7 +450,7 @@ As long as the synth exists, retriggering is just two `set` calls. Only the firs
     }
 ```
 
-**Lines 168-189**: param-setting.
+**Lines 182-202**: param-setting.
 
 `adjustVoice` sets the param on the single voice's subgroup (which broadcasts the set to any synth inside it — usually one synth) AND updates the cached param value (so future `Synth.new` uses it).
 
@@ -458,7 +475,7 @@ As long as the synth exists, retriggering is just two `set` calls. Only the firs
 }
 ```
 
-**Lines 191-197**: cleanup methods.
+**Lines 204-211**: cleanup methods.
 
 `freeAllNotes`:
 - **`voiceGroup.freeAll`** — frees every synth in the outer group + recursively in subgroups. Hard kill. The subgroups themselves stay alive.
@@ -499,9 +516,9 @@ You should hear a stack of FM tones, voice 1 separable from voices 2 and 3 becau
 
 ## Summary
 
-`TriSin.sc` is 198 lines defining a full-featured FM voice. The patterns established here apply (with variations) to all four voice classes:
+`TriSin.sc` is 211 lines defining a full-featured FM voice. The patterns established here apply (with variations) to all four voice classes:
 
-- **Persistent voice model**: no `doneAction: 2`. Each subgroup's Synth stays alive; retriggers via `set(\t_gate, 1)` are cheap.
+- **Persistent voice model**: no `doneAction: 2`. Each subgroup's Synth stays alive and **pauses itself when silent** (`Lied.pauseWhenSilent`); retriggers send `run(true)` plus `set(\t_gate, 1)` in one bundle, using the `voiceSynths` handle.
 - **`isPlaying` branch for retrigger vs allocate**: only allocate when no synth exists for the voice key.
 - **`NodeWatcher.register(node, true)`** to keep `isPlaying` accurate.
 - **Two envelopes**: AR volume envelope + AR FM-index envelope. Both gated by t_gate, both shaped per-cell via params.
