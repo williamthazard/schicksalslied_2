@@ -1,6 +1,6 @@
 # Chapter 05 — `lib/TriSin.sc`
 
-The FM-synthesis voice class. **211 lines.** TriSin is the most parameter-rich voice in the project — FM index envelope, MoogFF filter with optional envelope tracking, slewed pitch, plus the standard send routing.
+The FM-synthesis voice class. **219 lines.** TriSin is the most parameter-rich voice in the project — FM index envelope, MoogFF filter with optional envelope tracking, slewed pitch, plus the standard send routing.
 
 ## What you'll learn
 
@@ -199,7 +199,7 @@ The args, grouped:
 `─────────────────────────────────────────────────`
 
 ```supercollider
-            var car, mod, envelope, iEnv, filter, signal, ampSig, paused;
+            var car, mod, envelope, iEnv, envCutoff, onFloor, filter, signal, ampSig, paused;
             var slewed_freq = max(0.1, freq + hz_offset).lag3(freq_slew);
 
             envelope = EnvGen.kr(
@@ -260,10 +260,18 @@ The `LFTri` carrier (triangle, not sine) is what gives TriSin its name: TRIangle
 `─────────────────────────────────────────────────`
 
 ```supercollider
+            // The enveloped cutoff stops at 20 Hz: at 0 Hz MoogFF freezes and
+            // holds its last output as DC, so the voice never fell silent
+            // (and never paused). Once the decay reaches that floor,
+            // resonance is capped below self-oscillation so the filter rings
+            // down instead of humming at 20 Hz. The note above 20 Hz is
+            // unchanged.
+            envCutoff = cutoff * envelope;
+            onFloor = (envCutoff < 20) * (Sweep.kr(t_gate) > attack);
             filter = MoogFF.ar(
                 in: car,
-                freq: Select.kr(cutoff_env > 0, [cutoff, cutoff * envelope]),
-                gain: resonance
+                freq: Select.kr(cutoff_env > 0, [cutoff, envCutoff.max(20)]),
+                gain: Select.kr(cutoff_env > 0, [resonance, resonance.min(4 - (0.5 * onFloor))])
             );
 
             paused = Lied.pauseWhenSilent(t_gate, attack + release, filter);
@@ -274,17 +282,21 @@ The `LFTri` carrier (triangle, not sine) is what gives TriSin its name: TRIangle
             );
 ```
 
-**Lines 75-86**: filter, self-pause and pan.
+**Lines 75-94**: filter, self-pause and pan.
 
 `MoogFF.ar(in, freq, gain)` is a Moog ladder filter UGen with `freq` cutoff and `gain` resonance.
 
-`Select.kr(cutoff_env > 0, [cutoff, cutoff * envelope])` is the conditional cutoff:
-- If `cutoff_env > 0` (boolean, 1 when true), use `cutoff * envelope`. The cutoff is multiplied by the envelope value (0-1), producing a cutoff sweep that closes as the note decays.
+`Select.kr(cutoff_env > 0, [cutoff, envCutoff.max(20)])` is the conditional cutoff:
+- If `cutoff_env > 0` (boolean, 1 when true), use `envCutoff`, which is `cutoff * envelope`. The cutoff is multiplied by the envelope value (0-1), producing a cutoff sweep that closes as the note decays.
 - Otherwise, use `cutoff` directly. Static filter.
 
 This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter opens at the attack and closes at the release.
 
-`paused = Lied.pauseWhenSilent(t_gate, attack + release, filter)` is what makes a persistent voice cheap. Persistent means the synth never frees, but it would otherwise keep computing the FM graph (and writing zeros to four buses) between notes. This helper pauses the synth once `attack + release` seconds have passed since the last `t_gate` **and** the post-filter signal is below -80 dB. The signal check matters here: `MoogFF` can ring on after the envelope ends, and at high `resonance` it self-oscillates, in which case the voice correctly never pauses. The next trigger resumes it (section 4). The helper returns its pause condition, which goes to `notePan` below. Full explanation, and why it uses `PauseSelf` rather than `DetectSilence` or an envelope `doneAction`, in chapter 03.
+The swept cutoff stops at 20 Hz (`.max(20)`) instead of reaching 0. A `MoogFF` at 0 Hz doesn't go quiet; it freezes, holding whatever it was outputting as a constant DC offset. That offset kept the voice from ever counting as silent (so it never paused), and the next note had to jump away from it. At 20 Hz the filter drains to true zero shortly after the note. The cutoff only gets that low in the last few percent of the release, where the signal is already tiny, so the audible note is sample-for-sample unchanged.
+
+The floor has one catch: at `resonance` 4 `MoogFF` self-oscillates, and a self-oscillating filter parked at 20 Hz would hum there until the next note. So `onFloor` (1 once the attack is over and the swept cutoff is below 20 Hz) caps the gain at 3.5 for just that stretch, and the filter rings down instead. The `Sweep.kr(t_gate) > attack` term keeps the cap away from the start of a note, where the envelope also begins near 0. With `cutoff_env = 0` neither the floor nor the cap applies.
+
+`paused = Lied.pauseWhenSilent(t_gate, attack + release, filter)` is what makes a persistent voice cheap. Persistent means the synth never frees, but it would otherwise keep computing the FM graph (and writing zeros to four buses) between notes. This helper pauses the synth once `attack + release` seconds have passed since the last `t_gate` **and** the post-filter signal is below -80 dB. The signal check matters here: `MoogFF` can ring on after the envelope ends, and with `cutoff_env = 0` at `resonance` 4 it self-oscillates, in which case the voice correctly never pauses. The next trigger resumes it (section 4). The helper returns its pause condition, which goes to `notePan` below. Full explanation, and why it uses `PauseSelf` rather than `DetectSilence` or an envelope `doneAction`, in chapter 03.
 
 `Lied.notePan(pan, pan_slew, t_gate, paused)` replaces the old `pan.lag3(pan_slew)`. A paused synth's pan lag is frozen at a stale value, so the note that **resumes** a paused voice snaps to the current pan (it does not start from where the last note left it). A note that retriggers a voice that is still sounding keeps slewing: snapping there would jump the ringing tail across the stereo field within one block, which clicked. After that, the pan slews with `pan_slew` for as long as the note sounds, so a pan change during a note still glides. Details in chapter 03.
 
@@ -298,9 +310,9 @@ This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter
     }
 ```
 
-**Lines 89-94**: post-fader amp and the four Y-shaped sends. Each `Out.ar` writes `signal × amp × send_level` to its FX bus.
+**Lines 96-102**: post-fader amp and the four Y-shaped sends. Each `Out.ar` writes `signal × amp × send_level` to its FX bus.
 
-`.add` at the end registers the SynthDef. The closing `}` of `*addSynthDefs` follows it directly (line 95); there is no `StartUp`/`waitForBoot` wrapper to unwind.
+`.add` at the end registers the SynthDef. The closing `}` of `*addSynthDefs` follows it directly (line 103); there is no `StartUp`/`waitForBoot` wrapper to unwind.
 
 ## 3. `*new` + `init`
 
@@ -357,7 +369,7 @@ This is the "filter envelope tracking" option. With `cutoff_env = 1`, the filter
     }
 ```
 
-**Lines 97-146**: constructor + initializer. `*new` is standard SC delegation to `init`.
+**Lines 105-154**: constructor + initializer. `*new` is standard SC delegation to `init`.
 
 `init`:
 - **`voiceGroup = Group.new(s)`** — outer group on the server.
@@ -410,7 +422,7 @@ Defaults worth noting:
     }
 ```
 
-**Lines 150-179**: trigger machinery.
+**Lines 158-187**: trigger machinery.
 
 `playVoice(voiceKey, freq)`: the **persistent voice retrigger pattern**.
 
@@ -450,7 +462,7 @@ As long as the synth exists, retriggering is one resume plus one `set`, bundled.
     }
 ```
 
-**Lines 182-202**: param-setting.
+**Lines 190-210**: param-setting.
 
 `adjustVoice` sets the param on the single voice's subgroup (which broadcasts the set to any synth inside it — usually one synth) AND updates the cached param value (so future `Synth.new` uses it).
 
@@ -475,7 +487,7 @@ As long as the synth exists, retriggering is one resume plus one `set`, bundled.
 }
 ```
 
-**Lines 204-211**: cleanup methods.
+**Lines 212-219**: cleanup methods.
 
 `freeAllNotes`:
 - **`voiceGroup.freeAll`** — frees every synth in the outer group + recursively in subgroups. Hard kill. The subgroups themselves stay alive.
@@ -516,13 +528,13 @@ You should hear a stack of FM tones, voice 1 separable from voices 2 and 3 becau
 
 ## Summary
 
-`TriSin.sc` is 211 lines defining a full-featured FM voice. The patterns established here apply (with variations) to all four voice classes:
+`TriSin.sc` is 219 lines defining a full-featured FM voice. The patterns established here apply (with variations) to all four voice classes:
 
 - **Persistent voice model**: no `doneAction: 2`. Each subgroup's Synth stays alive and **pauses itself when silent** (`Lied.pauseWhenSilent`); retriggers send `run(true)` plus `set(\t_gate, 1)` in one bundle, using the `voiceSynths` handle.
 - **`isPlaying` branch for retrigger vs allocate**: only allocate when no synth exists for the voice key.
 - **`NodeWatcher.register(node, true)`** to keep `isPlaying` accurate.
 - **Two envelopes**: AR volume envelope + AR FM-index envelope. Both gated by t_gate, both shaped per-cell via params.
-- **Conditional cutoff envelope**: `Select.kr(cutoff_env > 0, [cutoff, cutoff * envelope])` toggles between static cutoff and envelope-tracked cutoff.
+- **Conditional cutoff envelope**: `Select.kr(cutoff_env > 0, [cutoff, envCutoff.max(20)])` toggles between static cutoff and envelope-tracked cutoff (floored at 20 Hz so the filter drains to silence).
 
 The voice-pool pattern (classvar voiceKeys, globalParams template, singleVoices subgroups, voiceParams cache, trigger / setParam / free) is the canonical structure for all voice classes in this script.
 

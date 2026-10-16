@@ -127,7 +127,7 @@ standard norns PSET via PARAMETERS → PSET. history and per-cell string assignm
 - **delay decay** now goes up to 60 s (it was 10 s) on an exponential curve, so long delay times can ring on and short decays get finer steps. saved PSETs store seconds, so old values load unchanged.
 - **reversed one-shots play** (a negative one-shot rate used to be silent, because playback started at the file's first frame with nothing behind it; reversed hits now start from the end of the file).
 - **looping samplers now play mono files centered in both speakers** (they used to come out of the left speaker only).
-- **idle voices now pause automatically** (Sine, TriSin, samplers, one-shots), so large setups use noticeably less CPU, and **a note that starts after its voice went quiet starts at the current pan** instead of gliding in from wherever the voice last left it (a note that retriggers a still-ringing voice keeps gliding, so the tail never jumps). Granular delay grains are now panned after a single filter, so the pan LFO sweeps the whole grain cloud smoothly.
+- **idle voices now pause automatically** (Sine, TriSin, samplers, one-shots), so large setups use noticeably less CPU, and **a note that starts after its voice went quiet starts at the current pan** instead of gliding in from wherever the voice last left it (a note that retriggers a still-ringing voice keeps gliding, so the tail never jumps). Granular delay grains are now panned after a single filter, so the pan LFO sweeps the whole grain cloud smoothly. TriSin's enveloped filter now drains to true silence at the end of a note (it used to freeze, leaving a small DC offset that the next note jumped away from).
 - one-shot cells now read 3 characters of text per hit (it used to be 1), so a given line drives a different one-shot rhythm than in 2.0.
 
 ## tips
@@ -135,7 +135,7 @@ standard norns PSET via PARAMETERS → PSET. history and per-cell string assignm
 - start sparse — one voice + one sampler + granular is plenty
 - use per-cell **phase** for backbeat patterns (kick on `rate=2 phase=0`, snare on `rate=2 phase=1`)
 - save often: PSET captures everything including typed history
-- idle voices pause themselves: once a note has finished and gone silent, its voice stops using CPU until the next note, so many parts cost much less than they used to (a self-oscillating filter never goes quiet, so it never pauses)
+- idle voices pause themselves: once a note has finished and gone silent, its voice stops using CPU until the next note, so many parts cost much less than they used to (a self-oscillating filter with a steady cutoff never goes quiet, so it never pauses; a TriSin with **cutoff env** on lets its filter ring down at the end of each note, so it pauses even at full resonance)
 - a note that starts after the voice went quiet starts at the current pan position and then slews from there; a note that retriggers a voice still ringing keeps gliding from where its tail is. A pan change or LFO during a note still glides (a note can start left and swing right as it decays)
 
 ## troubleshooting

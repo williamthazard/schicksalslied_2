@@ -43,7 +43,7 @@ TriSin {
                 dry_bus = 0, reverb_bus = 0, delay_bus = 0, gran_bus = 0,
                 dry_send = 1, reverb_send = 0, delay_send = 0, granular_send = 0;
 
-            var car, mod, envelope, iEnv, filter, signal, ampSig, paused;
+            var car, mod, envelope, iEnv, envCutoff, onFloor, filter, signal, ampSig, paused;
             var slewed_freq = max(0.1, freq + hz_offset).lag3(freq_slew);
 
             envelope = EnvGen.kr(
@@ -72,10 +72,18 @@ TriSin {
             mod = SinOsc.ar(slewed_freq * mRatio, mul: slewed_freq * mRatio * iEnv);
             car = LFTri.ar(slewed_freq * cRatio + mod) * envelope;
 
+            // The enveloped cutoff stops at 20 Hz: at 0 Hz MoogFF freezes and
+            // holds its last output as DC, so the voice never fell silent
+            // (and never paused). Once the decay reaches that floor,
+            // resonance is capped below self-oscillation so the filter rings
+            // down instead of humming at 20 Hz. The note above 20 Hz is
+            // unchanged.
+            envCutoff = cutoff * envelope;
+            onFloor = (envCutoff < 20) * (Sweep.kr(t_gate) > attack);
             filter = MoogFF.ar(
                 in: car,
-                freq: Select.kr(cutoff_env > 0, [cutoff, cutoff * envelope]),
-                gain: resonance
+                freq: Select.kr(cutoff_env > 0, [cutoff, envCutoff.max(20)]),
+                gain: Select.kr(cutoff_env > 0, [resonance, resonance.min(4 - (0.5 * onFloor))])
             );
 
             paused = Lied.pauseWhenSilent(t_gate, attack + release, filter);
