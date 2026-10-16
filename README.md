@@ -113,6 +113,8 @@ PARAMETERS → master fx: delay (sync'd or free, up to 8 sec), reverb (room + da
 
 PARAMETERS → midi input: pick device + role (TriSin or Ringer) for a dedicated voice. PARAMETERS → midi: pick the output device for the `MIDI` voice role. standard norns MIDI mapping works on every param.
 
+mapped controllers get value feedback: the current value is sent out when the script loads, after a PSET load, and whenever it changes from the params menu, the grid or an LFO, so encoders with LED rings (a Midi Fighter Twister, say) show the right value and your next turn starts from it. turns from the controller aren't echoed back, and this applies to every mapping whether or not its echo option is on. on a Twister, leave the encoders in their default absolute (CC) mode: the relative modes don't move the rings.
+
 ## PSET
 
 standard norns PSET via PARAMETERS → PSET. history and per-cell string assignments save to a sidecar `.lieddata` file alongside the .pset; PSET 01 autoloads on script start.
@@ -128,6 +130,7 @@ standard norns PSET via PARAMETERS → PSET. history and per-cell string assignm
 - **reversed one-shots play** (a negative one-shot rate used to be silent, because playback started at the file's first frame with nothing behind it; reversed hits now start from the end of the file).
 - **looping samplers now play mono files centered in both speakers** (they used to come out of the left speaker only).
 - **idle voices now pause automatically** (Sine, TriSin, samplers, one-shots), so large setups use noticeably less CPU, and **a note that starts after its voice went quiet starts at the current pan** instead of gliding in from wherever the voice last left it (a note that retriggers a still-ringing voice keeps gliding, so the tail never jumps). Granular delay grains are now panned after a single filter, so the pan LFO sweeps the whole grain cloud smoothly. TriSin's enveloped filter now drains to true silence at the end of a note (it used to freeze, leaving a small DC offset that the next note jumped away from).
+- **MIDI-mapped params now send their value back to the controller** (on load, after a PSET load, and on any change from the menu, grid or LFOs), so rings on a controller like a Midi Fighter Twister match the script. an LFO on a mapped param will animate its ring.
 - one-shot cells now read 3 characters of text per hit (it used to be 1), so a given line drives a different one-shot rhythm than in 2.0.
 
 ## tips

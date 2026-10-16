@@ -2,13 +2,19 @@
 ---
 ---a poetry sequencer
 ---
----type to enter text, ENTER to stage,
----grid row 3/5/7 press to assign,
----grid row 2/4/6/8 toggle to fire.
+---type to enter text,
+---ENTER to stage,
+---grid row 3/5/7 press
+---to assign,
+---grid row 2/4/6/8 toggle
+---to fire.
 ---
----K1: (unused)       E1: scroll history
----K2: append history E2: global amp
----K3: enter          E3: bpm
+---K1: (unused)
+---K2: append history
+---K3: enter
+---E1: scroll history
+---E2: global amp
+---E3: bpm
 ---
 ---version 2.0.0
 
@@ -20,6 +26,7 @@ local MusicUtil  = require 'musicutil'
 local Midi       = include 'lib/midi_role'
 local Grain      = include 'lib/grid_grain_params'
 local MidiInput  = include 'lib/midi_input'
+local MidiFeedback = include 'lib/midi_feedback'
 
 -- ========================================================================
 -- MIC MONITOR (row 8 col 16 = shortcut to the norns LEVELS monitor)
@@ -1353,6 +1360,8 @@ function init()
         local VoiceParams = include 'lib/voice_params'
         VoiceParams.refresh_all_cell_string_params()
         grid_dirty = true
+        -- Send every MIDI-mapped value again so controllers match the PSET.
+        MidiFeedback.resend()
     end
     params.action_delete = function(filename, _name, _pset_number)
         local path = sidecar_path(filename)
@@ -1473,6 +1482,10 @@ function init()
 
     crow_reinit()
 
+    -- MIDI-mapped controllers (PARAMETERS > MAP) follow param changes from
+    -- anywhere: menu, PSET, grid, LFOs. The first pass sends every value.
+    MidiFeedback.init()
+
     print('schicksalslied 2.0 ready')
 end
 
@@ -1480,6 +1493,7 @@ end
 -- CLEANUP
 -- ========================================================================
 function cleanup()
+    MidiFeedback.cleanup()
     Sequencer.stop_all_clocks()
     Roles.free_all()
     -- Hand monitor_level its own action back. The level itself stays where

@@ -4,14 +4,14 @@ A step-by-step guide to building schicksalslied 2.0 from scratch. Every line of 
 
 ## How this is organized
 
-20 numbered chapters that read linearly. Each chapter is either:
+21 numbered chapters that read linearly. Each chapter is either:
 
 - **A prerequisite chapter** (01, 02, 09, 20) — establishes concepts or workflow without walking a specific file.
-- **A per-file chapter** (03-08, 10-19) — covers exactly one source file, explaining its architecture and walking through every line.
+- **A per-file chapter** (03-08, 10-19, 21) — covers exactly one source file, explaining its architecture and walking through every line.
 
-The chapters are organized in a build-from-the-bottom order: SuperCollider DSP first (chapters 02-08), then Norns Lua control side (chapters 09-19), then deployment + debugging (chapter 20).
+The chapters are organized in a build-from-the-bottom order: SuperCollider DSP first (chapters 02-08), then Norns Lua control side (chapters 09-19), then deployment + debugging (chapter 20). Chapter 21 was added later and covers the MIDI controller feedback module (`lib/midi_feedback.lua`), which is wired in from chapter 19's `init` and `cleanup`.
 
-If you want the full paint-by-numbers experience, read 01 through 20 in order, typing along. If you're already familiar with parts of the project and need targeted reference, jump to the chapter for the file you're working in.
+If you want the full paint-by-numbers experience, read 01 through 21 in order, typing along. If you're already familiar with parts of the project and need targeted reference, jump to the chapter for the file you're working in.
 
 ## Chapter index
 
@@ -37,6 +37,7 @@ If you want the full paint-by-numbers experience, read 01 through 20 in order, t
 | 18 | [wtape_looper.lua](18-wtape_looper.lua.md) | `lib/wtape_looper.lua` | w/tape looper choreography |
 | 19 | [schicksalslied.lua](19-schicksalslied.lua.md) | `schicksalslied.lua` | Top-level script: init, params, grid, screen, panic, cleanup |
 | 20 | [Deployment and Debugging](20-deployment-debugging.md) | (none) | Deploy flow, common failure modes, the TICK probe, what to check first |
+| 21 | [midi_feedback.lua](21-midi_feedback.lua.md) | `lib/midi_feedback.lua` | MIDI controller feedback: mapped params (Midi Fighter Twister rings) follow every value change |
 
 (`lib/Sine.sc`, the default row-2 voice, has no chapter of its own: it has the same structure as TriSin, which chapter 05 walks through.)
 
@@ -44,7 +45,7 @@ If you want the full paint-by-numbers experience, read 01 through 20 in order, t
 
 **Linear (recommended for first read):**
 
-01 → 20 in order. Each chapter builds on the previous. By chapter 11 you have a complete SC engine; by chapter 19 you have a complete Lua control side; chapter 20 finalizes deployment.
+01 → 21 in order. Each chapter builds on the previous. By chapter 11 you have a complete SC engine; by chapter 19 you have a complete Lua control side; chapter 20 finalizes deployment; chapter 21 covers the later MIDI feedback module.
 
 **SC-first (you already know Norns Lua):**
 
@@ -52,7 +53,7 @@ If you want the full paint-by-numbers experience, read 01 through 20 in order, t
 
 **Lua-first (you already write SuperCollider):**
 
-01 → 09 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20, then loop back to 02-08 to understand the engine your Lua talks to.
+01 → 09 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21, then loop back to 02-08 to understand the engine your Lua talks to.
 
 **Targeted lookup:**
 

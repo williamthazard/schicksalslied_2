@@ -13,13 +13,19 @@ A note on prerequisites: you really do need all the previous chapters here. Ever
 ---
 ---a poetry sequencer
 ---
----type to enter text, ENTER to stage,
----grid row 3/5/7 press to assign,
----grid row 2/4/6/8 toggle to fire.
+---type to enter text,
+---ENTER to stage,
+---grid row 3/5/7 press
+---to assign,
+---grid row 2/4/6/8 toggle
+---to fire.
 ---
----K1: (unused)       E1: scroll history
----K2: append history E2: global amp
----K3: enter          E3: bpm
+---K1: (unused)
+---K2: append history
+---K3: enter
+---E1: scroll history
+---E2: global amp
+---E3: bpm
 ---
 ---version 2.0.0
 
@@ -31,15 +37,16 @@ local MusicUtil  = require 'musicutil'
 local Midi       = include 'lib/midi_role'
 local Grain      = include 'lib/grid_grain_params'
 local MidiInput  = include 'lib/midi_input'
+local MidiFeedback = include 'lib/midi_feedback'
 ```
 
-**Lines 1-22**: file header + engine declaration + 6 module imports.
+**Lines 1-29**: file header + engine declaration + 7 module imports.
 
-The `---` triple-dash prefix is Norns's convention for the **SELECT screen description**. Lines 1-13 appear on the Norns when the user is choosing scripts: title, tagline, summary, key bindings, version. This is the only place this metadata lives.
+The `---` triple-dash prefix is Norns's convention for the **SELECT screen description**. Lines 1-19 appear on the Norns when the user is choosing scripts: title, tagline, summary, key bindings, version. This is the only place this metadata lives. The preview page draws them in norns' 8-pixel font, 8 lines at a time (E2 scrolls), with no wrapping, so each line is kept under the screen's 128 pixels: roughly 25 characters, fewer with wide letters like `m` and `w`. That is why the instructions are broken into short lines and the key bindings are one per line (a two-column layout needs a monospaced font, which this is not).
 
 **`engine.name = 'Lied'`** triggers Norns to load `lib/Engine_Lied.sc` and instantiate the engine before `init()` runs. This must come BEFORE any `engine.<command>` calls.
 
-The 6 imports:
+The 7 imports:
 
 - **`Sequencer`** (include) — the per-cell state and clock-loop module. The file-local `Sequencer` is used at module top-level; `_G.GlobalSequencer` (set in init) is used inside actions that need to share state across files.
 - **`Roles`** — the role registry. Same pattern: file-local + `_G.GlobalRoles`.
@@ -47,6 +54,7 @@ The 6 imports:
 - **`Midi`** — MIDI-out role module.
 - **`Grain`** — granular params module.
 - **`MidiInput`** — MIDI keyboard input module.
+- **`MidiFeedback`** — keeps MIDI-mapped controllers (PARAMETERS > MAP) showing each param's current value; see [chapter 21](21-midi_feedback.lua.md).
 
 The `include` calls don't cache (chapter 09). The file-local references are file-local; cross-file state-sharing uses `_G.GlobalSequencer` / `_G.GlobalRoles`.
 
@@ -969,6 +977,9 @@ The `do ... end` block scopes the local VoiceParams reference so it doesn't poll
                 for i, s in ipairs(data.history) do history[i] = s end
             end
             history_index = #history
+            -- Clear stale assignments, then route each saved entry through
+            -- Sequencer.assign so the live Seq[x][y] Sequins gets :settable'd
+            -- (display state alone isn't enough — playback reads Seq directly).
             for k in pairs(Sequencer._cell_assigned_strings) do
                 Sequencer._cell_assigned_strings[k] = nil
             end
@@ -981,9 +992,14 @@ The `do ... end` block scopes the local VoiceParams reference so it doesn't poll
                 end
             end
         end
+        -- Refresh unconditionally: legacy PSETs (no sidecar) may have set
+        -- cell_X_Y_string option indices that point into a now-empty option
+        -- list — refresh snaps them back to (none) to match actual cell state.
         local VoiceParams = include 'lib/voice_params'
         VoiceParams.refresh_all_cell_string_params()
         grid_dirty = true
+        -- Send every MIDI-mapped value again so controllers match the PSET.
+        MidiFeedback.resend()
     end
     params.action_delete = function(filename, _name, _pset_number)
         local path = sidecar_path(filename)
@@ -994,6 +1010,8 @@ The `do ... end` block scopes the local VoiceParams reference so it doesn't poll
 **Lines ~1233-1273**: PSET sidecar hooks. Detailed below in this section.
 
 The hooks save/restore `history` + `_cell_assigned_strings` alongside the PSET file via a `.lieddata` sidecar. Without this, PSET load would drop those tables (since they're script-side state, not params).
+
+The last line of `action_read`, `MidiFeedback.resend()`, makes every MIDI-mapped controller re-send its value after a PSET load so rings match the loaded values (chapter 21, section 7).
 
 In-place table mutation for `history` is critical: reassigning the local would orphan the `Sequencer.history` alias.
 
@@ -1126,16 +1144,24 @@ The first loop also re-fires each cell's role param, which (via the role action)
 
 ```lua
     crow_reinit()
+
+    -- MIDI-mapped controllers (PARAMETERS > MAP) follow param changes from
+    -- anywhere: menu, PSET, grid, LFOs. The first pass sends every value.
+    MidiFeedback.init()
+
     print('schicksalslied 2.0 ready')
 end
 ```
 
-**Lines ~1357-1359**: initialize crow and log readiness.
+**Last lines of `init`**: initialize crow, start MIDI controller feedback, and log readiness.
+
+`MidiFeedback.init()` wraps norns' MIDI-CC handler and `midi.add`, and starts a 15 Hz metro that sends a CC whenever a mapped param's value no longer matches what its controller holds. It comes last so every param (and every LFO binding) exists before the first pass sends. See [chapter 21](21-midi_feedback.lua.md).
 
 ## `cleanup` — symmetric teardown
 
 ```lua
 function cleanup()
+    MidiFeedback.cleanup()
     Sequencer.stop_all_clocks()
     Roles.free_all()
     -- Hand monitor_level its own action back. The level itself stays where
@@ -1151,8 +1177,9 @@ function cleanup()
 end
 ```
 
-**Lines ~1465-1484**: symmetric teardown.
+**Last function in the file**: symmetric teardown.
 
+- Stop MIDI controller feedback first (`MidiFeedback.cleanup()`): stops its metro and gives norns back its original MIDI-CC handler and `midi.add` (chapter 21, section 9).
 - Stop all clock coroutines.
 - Free all SC voice instances.
 - Give `monitor_level` its original norns action back. Cleanup deliberately does **not** change the monitor level: col 16 is a shortcut to a system LEVELS setting, so it stays wherever the user left it (like any LEVELS change), rather than being reset on exit.
