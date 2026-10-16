@@ -1,15 +1,15 @@
 # Chapter 19 — `schicksalslied.lua`
 
-The top-level script. **1,484 source lines** — the largest file in the project. This is the integration point where every previous chapter's module gets wired together. (The `Lines N-M` notes in this chapter were written against an earlier, shorter revision and are approximate; search the source for the quoted code.)
+The top-level script. **1,509 source lines** — the largest file in the project. This is the integration point where every previous chapter's module gets wired together. The `Lines N-M` notes give each quoted block's place in the current source; quotes sometimes leave out comments or condense a loop, so search for the code if a line looks different.
 
-If you've read chapters 03-18, the imports at the top of this file will all be familiar. The chapter has three movements. The first walks through the user-facing surface: keyboard input, grid handler, screen redraw, hardware keys/encoders, and the comprehensive `panic` function. The second is `add_params` — 737 lines of mostly-repetitive `params:add{...}` declarations; we establish the patterns and annotate the architecturally meaningful sections rather than reading every block. The third is `init()` and `cleanup()` — the orchestration that decides what gets set up in what order, including the PSET sidecar hook for persisting non-param script state across save/load.
+If you've read chapters 03-18, the imports at the top of this file will all be familiar. The chapter has three movements. The first walks through the user-facing surface: keyboard input, grid handler, screen redraw, hardware keys/encoders, and the comprehensive `panic` function. The second is `add_params` — 766 lines of mostly-repetitive `params:add{...}` declarations; we establish the patterns and annotate the architecturally meaningful sections rather than reading every block. The third is `init()` and `cleanup()` — the orchestration that decides what gets set up in what order, including the PSET sidecar hook for persisting non-param script state across save/load.
 
 A note on prerequisites: you really do need all the previous chapters here. Every module imported at the top of this file gets used somewhere in `init` or in a param action. If a section references a function you don't recognize, it's almost certainly defined in an earlier chapter.
 
 ## Header and dependencies
 
 ```lua
----schicksalslied 2.0
+---schicksalslied 2.1
 ---
 ---a poetry sequencer
 ---
@@ -27,7 +27,7 @@ A note on prerequisites: you really do need all the previous chapters here. Ever
 ---E2: global amp
 ---E3: bpm
 ---
----version 2.0.0
+---version 2.1.0
 
 engine.name = 'Lied'
 
@@ -128,7 +128,7 @@ local function check_sample_duration(label, slot, path)
 end
 ```
 
-**Lines 24-55**: pre-flight check on sample file loads.
+**Lines 31-82**: pre-flight check on sample file loads.
 
 - **`MAX_SAMPLE_SEC = 600`** — 10 minutes. Same cap as the SC kernel's `loadSampler` / `loadOneShot` use. Defined in both Lua and SC because each side enforces the cap on its own path.
 - **`file_duration(path)`** uses Norns's `audio.file_info(path)` to inspect the file's header (channels, sample count, sample rate, format). Returns duration in seconds, or nil if the file can't be inspected.
@@ -175,7 +175,7 @@ grid.remove = function(dev)
 end
 ```
 
-**Lines 57-90**: text/history state, grid handle, metro forward-declarations, hotplug handlers.
+**Lines 84-117**: text/history state, grid handle, metro forward-declarations, hotplug handlers.
 
 The text-input state:
 - **`displayed_string`** — the line currently being typed (or recalled from history).
@@ -221,7 +221,7 @@ local function crow_reinit()
 end
 ```
 
-**Lines 95-116**: initialize crow and ii-attached devices.
+**Lines 122-143**: initialize crow and ii-attached devices.
 
 Walk:
 
@@ -257,7 +257,7 @@ local function load_text_file(path)
 end
 ```
 
-**Lines 121-131**: load a .txt file into history.
+**Lines 148-158**: load a .txt file into history.
 
 - **Guard** against nil/empty/"-" paths.
 - **`io.input(path)`** opens the file as the default input.
@@ -276,7 +276,7 @@ keyboard.char = function(character)
 end
 ```
 
-**Lines 137-141**: handle character input. `keyboard.char` fires for every typed character. Append to `displayed_string` if under the 200-char cap.
+**Lines 164-168**: handle character input. `keyboard.char` fires for every typed character. Append to `displayed_string` if under the 200-char cap.
 
 ```lua
 keyboard.code = function(code, val)
@@ -317,7 +317,7 @@ keyboard.code = function(code, val)
 end
 ```
 
-**Lines 143-181**: handle special keys + Ctrl chord.
+**Lines 170-208**: handle special keys + Ctrl chord.
 
 `keyboard.code` fires for special keys (arrows, ENTER, BACKSPACE, etc.). `val == 0` is key-release; we act on press only (`val == 1` or `val == 2` for repeat).
 
@@ -356,7 +356,7 @@ local function state_param_id_for(x, y)
 end
 ```
 
-**Lines 193-210**: map a toggle-row grid cell to its corresponding state param.
+**Lines 220-237**: map a toggle-row grid cell to its corresponding state param.
 
 The mapping:
 - **Row 2**: `cell_X_2_state` (16 of these).
@@ -428,7 +428,7 @@ g.key = function(x, y, z)
 end
 ```
 
-**Lines 212-264**: the grid handler. Brief annotation:
+**Lines 239-302**: the grid handler. Brief annotation:
 
 - **Always**: update Momentary, mark grid dirty.
 - **Row 1 (history)**: press → append history line to displayed_string. Release → if no other row-1 button held, stage the staged string.
@@ -475,7 +475,7 @@ function grid_redraw()
 end
 ```
 
-**Lines 270-306**: render the grid state.
+**Lines 308-344**: render the grid state.
 
 Three iteration blocks:
 
@@ -515,7 +515,7 @@ function redraw()
 end
 ```
 
-**Lines 312-335**: render the screen.
+**Lines 350-373**: render the screen.
 
 - **`screen.clear()`** wipes.
 - **`screen.aa(0)`** turns OFF anti-aliasing (sharper text on Norns's small screen).
@@ -560,7 +560,7 @@ local function panic()
 end
 ```
 
-**Lines 341-389**: silence everything. Comprehensive teardown of all in-flight state.
+**Lines 379-427**: silence everything. Comprehensive teardown of all in-flight state.
 
 Walking through:
 
@@ -638,7 +638,7 @@ function enc(n, d)
 end
 ```
 
-**Lines 391-449**: hardware key + encoder handlers.
+**Lines 429-487**: hardware key + encoder handlers.
 
 `key(n, z)`:
 - `n` = which key (1, 2, or 3); `z` = state (0 = release, 1 = press).
@@ -662,21 +662,15 @@ local function global_randomize()
         print('global_randomize: lib/voice_params not yet present, skipping')
         return
     end
-    for x = 1, 16 do
-        VoiceParams.randomize_row2_cell(x)
-    end
-    for slot = 1, 16 do
-        VoiceParams.randomize_sampler(slot)
-    end
-    for slot = 1, 12 do
-        VoiceParams.randomize_oneshot(slot)
-    end
+    for x = 1, 16 do VoiceParams.randomize_row2_cell(x) end
+    for slot = 1, 16 do VoiceParams.randomize_sampler(slot) end
+    for slot = 1, 12 do VoiceParams.randomize_oneshot(slot) end
     VoiceParams.randomize_granular()
-    print('global randomize complete')
+    print('GLOBAL RANDOMIZE: applied')
 end
 ```
 
-**Lines 461-472**: randomize every cell + sampler + one-shot + granular. Used by the global_randomize trigger param.
+**Lines 499-510**: randomize every cell + sampler + one-shot + granular. Used by the global_randomize trigger param.
 
 The `pcall(require, ...)` is defensive against an early-development state where voice_params didn't yet exist. In current builds it always succeeds.
 
@@ -684,7 +678,7 @@ Iterates all randomizable surfaces, calling each module's randomize function. Re
 
 ## `add_params`: the big params declaration block
 
-The biggest single block in the file (roughly 900 lines). It declares every parameter in the script. The structure is:
+The biggest single block in the file (roughly 770 lines, 515-1280). It declares every parameter in the script. The structure is:
 
 ```lua
 local function add_params()
@@ -930,7 +924,7 @@ function init()
     Sequencer.dispatch_fn = function(x, y) Roles.dispatch(x, y) end
 ```
 
-**Lines 1214-1217**: build internal state. The Sequencer + Roles modules' init functions populate their state tables. Then wire them: `Roles.Sequencer = Sequencer` lets Roles read Sequencer state; `Sequencer.dispatch_fn = ...` lets Sequencer call into Roles.
+**Lines 1285-1289**: build internal state. The Sequencer + Roles modules' init functions populate their state tables. Then wire them: `Roles.Sequencer = Sequencer` lets Roles read Sequencer state; `Sequencer.dispatch_fn = ...` lets Sequencer call into Roles.
 
 ```lua
     _G.GlobalSequencer = Sequencer
@@ -942,7 +936,7 @@ function init()
     end
 ```
 
-**Lines 1219-1227**: expose canonical globals + alias history + install voice_params hooks.
+**Lines 1296-1313**: expose canonical globals + alias history + install voice_params hooks.
 
 - **`_G.GlobalSequencer = Sequencer`** — the cross-include identity workaround (chapter 09). Anywhere in the codebase that needs the canonical Sequencer reads `_G.GlobalSequencer`.
 - **`_G.GlobalRoles = Roles`** — same for Roles.
@@ -955,7 +949,7 @@ The `do ... end` block scopes the local VoiceParams reference so it doesn't poll
     add_params()
 ```
 
-**Line 1230**: declare all params. After this, the params menu has its full surface.
+**Line 1315**: declare all params. After this, the params menu has its full surface.
 
 ```lua
     local function sidecar_path(pset_filename)
@@ -1007,7 +1001,7 @@ The `do ... end` block scopes the local VoiceParams reference so it doesn't poll
     end
 ```
 
-**Lines ~1233-1273**: PSET sidecar hooks. Detailed below in this section.
+**Lines 1323-1369**: PSET sidecar hooks. Detailed below in this section.
 
 The hooks save/restore `history` + `_cell_assigned_strings` alongside the PSET file via a `.lieddata` sidecar. Without this, PSET load would drop those tables (since they're script-side state, not params).
 
@@ -1019,14 +1013,15 @@ In-place table mutation for `history` is critical: reassigning the local would o
     params:bang()
 ```
 
-**Line ~1275**: fire every param action with its current value. This is what pushes all the default + restored values to SC and to the rest of the script.
+**Line 1371**: fire every param action with its current value. This is what pushes all the default + restored values to SC and to the rest of the script.
 
 ```lua
     engine.set_beat_sec(clock.get_beat_sec())
     do
-        local prior = params:lookup_param('clock_tempo').action
+        local p = params:lookup_param('clock_tempo')
+        local prior = p and p.action or nil
         params:set_action('clock_tempo', function(bpm)
-            if prior then prior(bpm) end
+            if prior then prior(bpm) end  -- update the actual clock first
             engine.set_beat_sec(clock.get_beat_sec())
             if params.lookup['delay_sync'] ~= nil and params:get('delay_sync') ~= 1 then
                 params:set('delay_sync', params:get('delay_sync'))
@@ -1035,17 +1030,16 @@ In-place table mutation for `history` is critical: reassigning the local would o
     end
 ```
 
-**Lines ~1278-1289**: capture-then-chain the clock_tempo action. Covered in chapter 13. The new action: call the original (updates the actual matron clock) + push beat_sec to SC + re-fire delay_sync to recompute synced delay time.
+**Lines 1380-1391**: capture-then-chain the clock_tempo action. Covered in chapter 13. The new action: call the original (updates the actual matron clock) + push beat_sec to SC + re-fire delay_sync to recompute synced delay time.
 
 ```lua
     Midi.init()
-    MidiInput.init()
 ```
 
-**Lines ~1291-1292**: initialize MIDI modules. They connect to vports and register event handlers.
+**Line 1393**: initialize the MIDI-out role module, which connects to its vport. The MIDI-in synth needs no call here: `params:bang()` above already ran the `midi_input_device` and `midi_input_role` actions, which connect its keyboard port and allocate its voice.
 
 ```lua
-    -- Row 8 col 16 <-> LEVELS monitor_level: wrap norns' own action so the
+    -- Row 8 col 16 ↔ LEVELS monitor_level: wrap norns' own action so the
     -- LED follows changes made anywhere (grid, LEVELS menu, panic).
     prior_monitor_action = params:lookup_param('monitor_level').action
     params:set_action('monitor_level', function(db)
@@ -1091,7 +1085,7 @@ In-place table mutation for `history` is critical: reassigning the local would o
     end
 ```
 
-**Lines ~1375-1430**: install the monitor-level wrapper, then force a visibility refresh on every mode-driven param.
+**Lines 1395-1447**: install the monitor-level wrapper, then force a visibility refresh on every mode-driven param.
 
 The **monitor wrapper** is the mirror image of the `clock_tempo` capture-then-chain above it: grab norns' own `monitor_level` action, replace it with one that calls the original first (so the hardware monitor really changes) and then updates `Toggled[16][8]` and `grid_dirty`, and seed the LED from the current level. `cleanup` restores the original action.
 
@@ -1103,7 +1097,7 @@ The first loop also re-fires each cell's role param, which (via the role action)
     Sequencer.start_all_clocks()
 ```
 
-**Line ~1323**: spawn the 64 per-cell clock coroutines. The sequencer is now live.
+**Line 1449**: spawn the 64 per-cell clock coroutines. The sequencer is now live.
 
 ```lua
     screen_metro = metro.init()
@@ -1136,7 +1130,7 @@ The first loop also re-fires each cell's role param, which (via the role action)
     fire_decay_metro:start()
 ```
 
-**Lines ~1325-1355**: set up the three metros.
+**Lines 1452-1481**: set up the three metros.
 
 - **`screen_metro`** at 15 fps: calls `redraw` unconditionally. (The redraw itself is fast; no dirty-flag optimization needed at 15 fps.)
 - **`grid_metro`** at 30 fps: calls `grid_redraw` only if `grid_dirty`. Dirty-flag optimization saves redraws when nothing's changed.
@@ -1149,11 +1143,11 @@ The first loop also re-fires each cell's role param, which (via the role action)
     -- anywhere: menu, PSET, grid, LFOs. The first pass sends every value.
     MidiFeedback.init()
 
-    print('schicksalslied 2.0 ready')
+    print('schicksalslied 2.1 ready')
 end
 ```
 
-**Last lines of `init`**: initialize crow, start MIDI controller feedback, and log readiness.
+**Lines 1483-1490**: initialize crow, start MIDI controller feedback, and log readiness.
 
 `MidiFeedback.init()` wraps norns' MIDI-CC handler and `midi.add`, and starts a 15 Hz metro that sends a CC whenever a mapped param's value no longer matches what its controller holds. It comes last so every param (and every LFO binding) exists before the first pass sends. See [chapter 21](21-midi_feedback.lua.md).
 
@@ -1177,7 +1171,7 @@ function cleanup()
 end
 ```
 
-**Last function in the file**: symmetric teardown.
+**Lines 1495-1509**: symmetric teardown.
 
 - Stop MIDI controller feedback first (`MidiFeedback.cleanup()`): stops its metro and gives norns back its original MIDI-CC handler and `midi.add` (chapter 21, section 9).
 - Stop all clock coroutines.
@@ -1196,16 +1190,16 @@ The kernel's `free` method is called separately by Norns (when the engine is unl
 
 ## Summary
 
-`schicksalslied.lua` is about 1,480 lines, but the line count is mostly in the repetitive `add_params` block — the architecturally meaningful surface is much smaller:
+`schicksalslied.lua` is about 1,510 lines, but the line count is mostly in the repetitive `add_params` block — the architecturally meaningful surface is much smaller:
 
 - ~100 lines of helpers (file_duration, crow_reinit, load_text_file).
 - ~120 lines of input handlers (keyboard, g.key, state_param_id_for).
-- ~80 lines of rendering (grid_redraw, redraw).
+- ~60 lines of rendering (grid_redraw, redraw).
 - ~50 lines of panic.
-- ~50 lines of key/enc/global_randomize.
-- ~900 lines of add_params (mostly delegating to voice_params and granular helpers).
-- ~180 lines of init (the most important block).
-- ~10 lines of cleanup.
+- ~70 lines of key/enc/global_randomize.
+- ~770 lines of add_params (mostly delegating to voice_params and granular helpers).
+- ~200 lines of init (the most important block).
+- ~15 lines of cleanup.
 
 The patterns to internalize:
 

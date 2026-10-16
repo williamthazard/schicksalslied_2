@@ -1,4 +1,4 @@
-# schicksalslied 2.0
+# schicksalslied 2.1
 
 a poetry sequencer for monome norns
 
@@ -117,7 +117,7 @@ mapped controllers get value feedback: the current value is sent out when the sc
 
 ## PSET
 
-standard norns PSET via PARAMETERS → PSET. history and per-cell string assignments save to a sidecar `.lieddata` file alongside the .pset; PSET 01 autoloads on script start.
+standard norns PSET via PARAMETERS → PSET. history and per-cell string assignments save to a sidecar `.lieddata` file alongside the .pset.
 
 ## upgrading from 2.0
 

@@ -1,4 +1,4 @@
----schicksalslied 2.0
+---schicksalslied 2.1
 ---
 ---a poetry sequencer
 ---
@@ -16,7 +16,7 @@
 ---E2: global amp
 ---E3: bpm
 ---
----version 2.0.0
+---version 2.1.0
 
 engine.name = 'Lied'
 
@@ -1486,7 +1486,7 @@ function init()
     -- anywhere: menu, PSET, grid, LFOs. The first pass sends every value.
     MidiFeedback.init()
 
-    print('schicksalslied 2.0 ready')
+    print('schicksalslied 2.1 ready')
 end
 
 -- ========================================================================

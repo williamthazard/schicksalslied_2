@@ -49,7 +49,7 @@ The resulting tarball is around 60 KB — small enough that the SCP step is esse
 
 ### After deployment
 
-On Norns, hit SELECT to navigate the script picker, then select `schicksalslied`. The script loads. If everything works, you'll see "schicksalslied 2.0 ready" in the matron log (visible via Maiden's REPL pane).
+On Norns, hit SELECT to navigate the script picker, then select `schicksalslied`. The script loads. If everything works, you'll see "schicksalslied 2.1 ready" in the matron log (visible via Maiden's REPL pane).
 
 `★ Insight ─────────────────────────────────────`
 **The `audio/` and `data/` excludes** matter because users may have large audio files in their local `audio/` directory (for sample loading) and PSET files in `data/`. If you accidentally include them, the tarball balloons to many MB and may take seconds to transfer; worse, extracting may overwrite the user's PSETs with your dev defaults. Always exclude these.
