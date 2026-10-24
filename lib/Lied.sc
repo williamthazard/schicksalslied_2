@@ -166,8 +166,8 @@ Lied {
             BufWr.ar(sig, buf, ptr);
         }).add;
 
-        // Feedback patch mix — from main output, balance/softclip/HPF/inject,
-        // writes back to micBus (creates a feedback loop)
+        // Feedback patch mix — from main output, balance/softclip/HPF/inject, summed to
+        // mono (micBus is 1 channel) and written back to micBus (creates a feedback loop)
         SynthDef(\liedFbPatchMix, {
             arg in = 0, out = 0, amp = 0, amp_slew = 0.05, balance = 0,
                 hpFreq = 12, noiseLevel = 0.0, sineLevel = 0, sineHz = 55;
@@ -178,7 +178,7 @@ Lied {
             output = output + (SinOsc.ar(sineHz) * sineLevel);
             output = HPF.ar(output, hpFreq.max(5));
             output = output.softclip;
-            Out.ar(out, output * amp.lag3(amp_slew));
+            Out.ar(out, output.sum * 0.5 * amp.lag3(amp_slew));
         }).add;
 
         // Grain synth — reads from delay buffer at randomized rates/positions

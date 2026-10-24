@@ -342,8 +342,8 @@ The `preLevel` parameter (defaulting to 0) controls feedback within the buffer. 
 ### `\liedFbPatchMix`
 
 ```supercollider
-        // Feedback patch mix — from main output, balance/softclip/HPF/inject,
-        // writes back to micBus (creates a feedback loop)
+        // Feedback patch mix — from main output, balance/softclip/HPF/inject, summed to
+        // mono (micBus is 1 channel) and written back to micBus (creates a feedback loop)
         SynthDef(\liedFbPatchMix, {
             arg in = 0, out = 0, amp = 0, amp_slew = 0.05, balance = 0,
                 hpFreq = 12, noiseLevel = 0.0, sineLevel = 0, sineHz = 55;
@@ -352,20 +352,20 @@ The `preLevel` parameter (defaulting to 0) controls feedback within the buffer. 
             output = Balance2.ar(input[0], input[1], balance);
             output = output + (PinkNoise.ar * noiseLevel);
             output = output + (SinOsc.ar(sineHz) * sineLevel);
-            output = HPF.ar(output, hpFreq);
+            output = HPF.ar(output, hpFreq.max(5));
             output = output.softclip;
-            Out.ar(out, output * amp.lag3(amp_slew));
+            Out.ar(out, output.sum * 0.5 * amp.lag3(amp_slew));
         }).add;
 ```
 
 **Lines 157-170**: the feedback patch. This is the wildest UGen graph in the script. It reads the main output (bus 0) via `InFeedback.ar` (which allows reading buses that are processed later in the same block — the regular `In.ar` requires the writer to come first; `InFeedback.ar` accepts one-block latency in exchange for backward-reading capability). Then:
 
-1. **`Balance2.ar(L, R, balance)`** — pans/balances the stereo input to mono with adjustable L/R bias. `balance = 0` is centered; ±1 fully L or R.
+1. **`Balance2.ar(L, R, balance)`** — balances the stereo input with adjustable L/R bias. `balance = 0` is centered; ±1 fully L or R. Its output is still **stereo**: two channels.
 2. **Add pink noise** scaled by `noiseLevel` — for sound-design exploration.
 3. **Add a sine** at `sineHz` scaled by `sineLevel` — for hum injection.
 4. **HPF** — remove DC and very low frequencies (high-pass at `hpFreq`, default 12 Hz).
 5. **`softclip`** — saturate, preventing runaway feedback explosions.
-6. Scale by amp and write to `out` (typically micBus, completing the feedback loop).
+6. **Sum to mono** (`output.sum * 0.5`, the same 0.5-gain mono sum `\liedGranSend` uses), scale by amp, and write to `out` (micBus, completing the feedback loop). The sum matters: `micBus` is a 1-channel bus, and `Out.ar` writes an N-channel signal to N consecutive buses, so a stereo signal written to `micBus` would spill its right channel onto the next bus — `ptrBus`, allocated right after `micBus` — and scramble the delay's write position.
 
 The end result: turn up the amp and the granular chain self-modulates with the softclipped, optionally-noise-and-sine-injected main output feeding back into the mic bus.
 
